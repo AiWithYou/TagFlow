@@ -24,6 +24,9 @@ Ollamaを利用したAIモデルで画像にタグ（説明文）を付け、そ
 -   **非同期処理:**
     -   画像分析はバックグラウンドで実行され、プログレスバーで進捗を確認できます。処理中の停止も可能です。
 
+![image](https://github.com/user-attachments/assets/bb7b15fd-5c89-4e33-823b-517d3b4f97ff)
+
+
 ### 2. ファイル移動タブ (`FileMoveTab`)
 
 -   **タグベースのファイル検索:**
@@ -38,6 +41,9 @@ Ollamaを利用したAIモデルで画像にタグ（説明文）を付け、そ
 -   **非同期処理:**
     -   ファイル検索とコピー/移動処理はバックグラウンドで実行され、プログレスバーで進捗を確認できます。
 
+![image](https://github.com/user-attachments/assets/c3a82446-cded-44f1-94dd-20b4e51754d3)
+
+
 ### 3. 分析結果編集タブ (`ResultEditTab`)
 
 -   **テキストファイルの一括編集:**
@@ -47,12 +53,18 @@ Ollamaを利用したAIモデルで画像にタグ（説明文）を付け、そ
     -   画像ファイルを選択すると、プレビューと対応する `.txt` ファイルの内容が表示されます。
     -   テキストエディタで直接内容を編集し、個別に保存できます。
 
+![image](https://github.com/user-attachments/assets/fda5ecf7-0cd8-447b-878a-7cd83b1353fb)
+
+
 ### 4. AIチャットタブ (`ChatTab`)
 
 -   **Ollamaとの対話:**
     -   画像タグ付けタブで設定したOllamaモデル・URLを使用して、テキストベースのチャットができます。
     -   タグ付けのルール相談や、アイデア出しなどに活用できます。
     -   Shift+Enterでメッセージを送信できます。
+
+![image](https://github.com/user-attachments/assets/2f5d15ab-509e-4fdd-a5f5-cd5e68bded6a)
+
 
 ### 5. 設定機能 (メニューバー)
 
@@ -62,6 +74,11 @@ Ollamaを利用したAIモデルで画像にタグ（説明文）を付け、そ
     -   設定したパターンがサンプルテキストにどう影響するかをテストする機能もあります。
 -   **AIサーバ管理:**
     -   ローカルのOllamaサーバ (`ollama serve`) をアプリケーションから起動・停止できます（Windowsでは別コンソール、macOS/Linuxではバックグラウンド）。
+
+![image](https://github.com/user-attachments/assets/7ed7d31e-1c2f-489d-8483-263bf9872c2b)
+
+![image](https://github.com/user-attachments/assets/0d8abe93-1d86-4c45-9b7a-6e0ae870ce4d)
+
 
 ## ファイル構成
 
