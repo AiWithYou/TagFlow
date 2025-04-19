@@ -174,20 +174,12 @@ h:/AI/TagFlow/
 -   **分析精度:** 画像分析の精度は、使用するOllamaモデルの性能に依存します。
 -   **HEIC/AVIFサポート:** これらの形式の画像を扱うには、`pillow_heif` ライブラリが必要です (`pip install pillow-heif`)。
 
-## exe化について
-
-PyInstallerを使用して実行可能ファイル（exe）を作成する場合は、以下のコマンドを仮想環境がアクティブな状態で実行します（アイコンファイル `app_icon.ico` が存在する場合）。
-
-```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed --icon=app_icon.ico TagFlow.py
-```
-
 これにより、`dist` フォルダ内に単一の実行可能ファイルが生成されます。
 
 ## ライセンス
 
 このソフトウェアは商用利用可能です。
+ライブラリなどは元のライセンスに従ってください
 
 ## ユースケース集
 
