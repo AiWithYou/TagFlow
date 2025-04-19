@@ -1354,7 +1354,7 @@ class ImageTaggingTab(QWidget):
         if selected and len(selected) < self.image_list.count():
             reply = QMessageBox.question(
                 self, "確認",
-                f"選択された{len(selected)}個のみ分析しますか？\n「いいえ」で全画像分析",
+                f"選択された{len(selected)}個のみ分析しますか？\n「No」で全画像分析",
                 QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel
             )
             if reply == QMessageBox.Cancel:
