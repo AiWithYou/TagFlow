@@ -327,7 +327,7 @@ class ImageAnalyzer:
                 save_format = img.format if img.format else "PNG"
             if save_format.upper() == "HEIF": save_format = "PNG"
             img.save(img_buffer, format=save_format)
-                return base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+            return base64.b64encode(img_buffer.getvalue()).decode('utf-8')
         except Exception as e:
             logger.error(f"画像エンコードエラー: {str(e)}")
             raise
