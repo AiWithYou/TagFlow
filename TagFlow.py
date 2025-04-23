@@ -207,6 +207,7 @@ class ImagePreviewWidget(QWidget):
     def set_image(self, image_path):
         """
         指定されたパスの画像をラベルに表示する
+        HEICなどの特殊フォーマットはPILで開いてから変換
         """
         self.image_path = image_path
         if not image_path or not Path(image_path).exists():
@@ -214,7 +215,13 @@ class ImagePreviewWidget(QWidget):
             self.pixmap = None
             return
         try:
-            self.pixmap = QPixmap(image_path)
+            # まずPILで画像を開く
+            with Image.open(image_path) as img:
+                if img.mode not in ('RGB', 'RGBA'):
+                    img = img.convert('RGBA')
+                # PILイメージをQImageに変換
+                qimg = ImageQt.ImageQt(img)
+                self.pixmap = QPixmap.fromImage(qimg)
             if self.pixmap.isNull():
                 self.image_label.setText("画像読み込み失敗")
                 return
@@ -272,6 +279,9 @@ class ImageListItem(QListWidgetItem):
         self.setToolTip(str(self.image_path))
         try:
             with Image.open(image_path) as img:
+                # RGBモードに変換して処理
+                if img.mode not in ('RGB', 'RGBA'):
+                    img = img.convert('RGBA')
                 img.thumbnail((100, 100))
                 qimg = ImageQt.ImageQt(img)
                 self.setIcon(QIcon(QPixmap.fromImage(qimg)))
@@ -323,11 +333,15 @@ class ImageAnalyzer:
         """
         try:
             with Image.open(image_path) as img:
+                # RGBモードに変換して処理
+                if img.mode not in ('RGB', 'RGBA'):
+                    img = img.convert('RGBA')
                 img_buffer = io.BytesIO()
                 save_format = img.format if img.format else "PNG"
-            if save_format.upper() == "HEIF": save_format = "PNG"
-            img.save(img_buffer, format=save_format)
-            return base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+                if save_format.upper() in ["HEIF", "WEBP"]:
+                    save_format = "PNG"
+                img.save(img_buffer, format=save_format)
+                return base64.b64encode(img_buffer.getvalue()).decode('utf-8')
         except Exception as e:
             logger.error(f"画像エンコードエラー: {str(e)}")
             raise
@@ -1869,7 +1883,7 @@ class ResultEditTab(QWidget):
         self.image_files = []
         if not Path(folder).exists():
             return
-        supported = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp', '.heic'}
+        supported = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp', '.heic', '.avif'}
         for f in Path(folder).glob("*.*"):
             if f.suffix.lower() in supported:
                 item = ImageListItem(str(f))
@@ -1924,7 +1938,7 @@ class ResultEditTab(QWidget):
             return
 
         txt_files = []
-        supported = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp', '.heic'}
+        supported = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.webp', '.heic', '.avif'}
         for f in self.current_folder.glob("*.*"):
             if f.suffix.lower() in supported:
                 txt_path = f.with_suffix('.txt')
