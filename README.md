@@ -112,3 +112,13 @@ pyinstaller --onefile --windowed --icon=app_icon.ico main_new.py
 - **過去SNS投稿の再利用**：画像 + タグ + Chatでハッシュタグ改善
 - **社内データ保護**：顔写真を検出・自動でアクセス制限領域へ
 
+
+## コード構成
+
+本ツールはメインスクリプト `TagFlow.py` から起動します。処理を分割するため、以下のサブモジュールを追加しています。
+
+- `tagflow/utils.py` : 設定ファイルの入出力やテキスト整形を行うユーティリティ。
+- `tagflow/analyzer.py` : Ollama API へ画像を送信しタグを取得する `ImageAnalyzer` クラス。
+
+`TagFlow.py` ではこれらをインポートすることで、コードの見通しを改善しています。
+

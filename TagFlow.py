@@ -1,19 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import os
-import base64
 import requests
 import subprocess
 import re
-import io
 import logging
 import sys
-import json
 import shutil
 import platform
 from pathlib import Path
 from PIL import Image, ImageQt
-from threading import Thread
+
+from tagflow import (
+    ImageAnalyzer,
+    default_initial_patterns,
+    default_additional_patterns,
+    load_app_config,
+    save_app_config,
+    apply_clean_patterns,
+)
 
 # PySide6インポート
 from PySide6.QtGui import (
@@ -42,113 +47,6 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# ----------------- デフォルト削除パターン -----------------
-default_initial_patterns = [
-    r"^Here.*?:",            # "Here..." で始まる前置きを削除
-    r"^説明[:：]\s*",
-    r"^This image shows",
-    r"^The image shows",
-    r"^In this image,",
-    r"^The image depicts",
-    r"^This image depicts",
-    r"^The photo shows",
-    r"^The picture shows",
-    r"^I will describe",
-    r"^I'll describe",
-    r"^Let me describe",
-    r"^I can see",
-    r"^画像には",
-    r"^この画像には",
-    r"^この画像は",
-    r"^この絵には",
-    r"^この絵は",
-    r"^この写真には",
-    r"^この写真は",
-    r"^写真には",
-    r"^画像は",
-    r"^この画像を.*?で説明します。?\n?",
-    r"^以下.*?で説明します。?\n?",
-    r"^、\s*"
-]
-
-default_additional_patterns = [
-    r"^また、?",
-    r"^そして、?",
-    r"^なお、?",
-    r"^さらに、?",
-    r"^加えて、?",
-    r"^特に、?",
-    r"^具体的には、?",
-    r"^Additionally,\s*",
-    r"^Moreover,\s*",
-    r"^Furthermore,\s*",
-    r"^Also,\s*",
-    r"^And\s*",
-    r"^Specifically,\s*",
-    r"^There\s+(?:is|are)\s+",
-    r"^We\s+can\s+see\s+",
-    r"^You\s+can\s+see\s+",
-    r"^It\s+appears\s+",
-    r"これは",
-    r"それは",
-    r"以下は",
-    r"次のような",
-    r"(?:以下の)?(?:画像に適用できる)?(?:Danbooru|だんぼーる|ダンボール|ダンボーる)?タグ(?:です|となります)。?\n?",
-    r"タグ(?:一覧|リスト)：\n?",
-    r"^[*＊・]",
-    r"^、",
-    r"主な(?:特徴|要素)(?:：|は)(?:以下の)?(?:通り|とおり)(?:です)?。?\n?"
-]
-
-# ----------------- ユーティリティ関数 -----------------
-def load_app_config(filepath=None):
-    """
-    JSON設定ファイルを読み込み、辞書を返す
-    """
-    config_file = Path(filepath) if filepath else Path("app_config.json")
-    if config_file.exists():
-        try:
-            with open(config_file, "r", encoding="utf-8") as f:
-                config_data = json.load(f)
-                logger.info(f"設定ファイル {config_file} から読み込みました。")
-                return config_data
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"設定ファイル読み込みエラー: {e}")
-    else:
-        logger.info("設定ファイルが見つかりません。空の設定を使用します。")
-    return {}
-
-def save_app_config(config, filepath=None):
-    """
-    設定をJSONファイルに保存する
-    """
-    config_file = Path(filepath) if filepath else Path("app_config.json")
-    try:
-        with open(config_file, "w", encoding="utf-8") as f:
-            json.dump(config, f, ensure_ascii=False, indent=2)
-            logger.info(f"設定を {config_file} に保存しました。")
-    except Exception as e:
-        logger.error(f"設定保存エラー: {e}")
-
-def apply_clean_patterns(text, patterns):
-    """
-    与えられたテキストに対して、初期および追加パターンを適用してクリーニングを行う
-    """
-    text = text.strip()
-    # 初期パターン適用
-    for pattern in patterns.get("initial", []):
-        text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL).strip()
-    # 追加パターン適用
-    for pattern in patterns.get("additional", []):
-        text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL).strip()
-
-    # 特殊文字削除処理: 改行やいくつかの記号をまとめてカンマに変換
-    text = re.sub(r'[・\-•*＊\n] ?', ', ', text, flags=re.MULTILINE | re.DOTALL)
-
-    # 不要な空白や行頭にある読点を調整
-    parts = [part.strip() for part in text.split(',') if part.strip() and not part.startswith('、')]
-    return ', '.join(parts)
 
 # ----------------- GUIウィジェット -----------------
 class DropListWidget(QListWidget):
@@ -281,123 +179,6 @@ class ImageListItem(QListWidgetItem):
             self.setIcon(QIcon())
 
 # ----------------- 画像分析関連 -----------------
-class ImageAnalyzer:
-    """
-    画像分析のためのクラス
-    """
-    def __init__(
-        self,
-        model="gemma3:27b",
-        use_japanese=False,
-        detail_level="standard",
-        custom_prompt=None,
-        clean_custom_response=True,
-        api_url="http://localhost:11434/api/generate",
-        clean_patterns=None
-    ):
-        """
-        :param model: 使用するモデル名
-        :param use_japanese: Trueの場合、日本語で説明させる
-        :param detail_level: 'brief', 'standard', 'detailed' の3段階
-        :param custom_prompt: カスタムプロンプト文字列
-        :param clean_custom_response: Trueの場合、余計な前置きを自動的に削除
-        :param api_url: APIエンドポイントのURL
-        :param clean_patterns: 削除・置換パターン辞書
-        """
-        self.model = model
-        self.use_japanese = use_japanese
-        self.detail_level = detail_level
-        self.custom_prompt = custom_prompt
-        self.clean_custom_response = clean_custom_response
-        self.api_url = api_url
-        # HEIC対応のため、拡張子を追加
-        self.supported_formats = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.heic', '.avif'}
-        self.clean_patterns = clean_patterns or {
-            "initial": default_initial_patterns,
-            "additional": default_additional_patterns
-        }
-
-    def encode_image(self, image_path):
-        """
-        Pillowで画像を開き、Base64にエンコードして返す
-        """
-        try:
-            with Image.open(image_path) as img:
-                img_buffer = io.BytesIO()
-                save_format = img.format if img.format else "PNG"
-            if save_format.upper() == "HEIF": save_format = "PNG"
-            img.save(img_buffer, format=save_format)
-            return base64.b64encode(img_buffer.getvalue()).decode('utf-8')
-        except Exception as e:
-            logger.error(f"画像エンコードエラー: {str(e)}")
-            raise
-
-    def get_prompt(self):
-        """
-        カスタムプロンプトがあればそれを使用し、
-        なければ detail_level と use_japanese に応じたデフォルトを返す
-        """
-        if self.custom_prompt:
-            prompt = self.custom_prompt.strip()
-            if self.clean_custom_response:
-                if self.use_japanese:
-                    prompt += " 主要な要素や行動に焦点を当て、余計な前置きは不要です。"
-                else:
-                    prompt += " Focus on key elements and actions, and omit unnecessary introductory phrases."
-            return prompt
-
-        # デフォルトのプロンプト
-        if self.use_japanese:
-            if self.detail_level == "brief":
-                return "この画像を1文で簡潔に説明してください。余計な前置きは不要です。"
-            elif self.detail_level == "standard":
-                return "この画像を2〜3文で説明してください。主要な要素や行動に焦点を当て、余計な前置きは不要です。"
-            else:
-                return "この画像を4〜5文で詳しく説明してください。視覚的な要素、行動、雰囲気などを含めて説明し、余計な前置きは不要です。"
-        else:
-            if self.detail_level == "brief":
-                return "Describe this image in a single concise sentence, without any introductory phrases."
-            elif self.detail_level == "standard":
-                return "Describe this image in 2-3 sentences, focusing on key elements and actions. No introductory phrases."
-            else:
-                return "Describe this image in 4-5 sentences, including visual elements, actions, and atmosphere. No introductory phrases."
-
-    def clean_response_text(self, response):
-        """
-        得られたレスポンステキストを設定されたパターンに基づいてクリーンアップする
-        """
-        return apply_clean_patterns(response, self.clean_patterns)
-
-    def analyze_image(self, image_path):
-        """
-        画像をAPIに送信して分析し、テキスト（タグ）を返す
-        """
-        try:
-            base64_image = self.encode_image(image_path)
-            payload = {
-                "model": self.model,
-                "prompt": self.get_prompt(),
-                "stream": False,
-                "images": [base64_image]
-            }
-            response = requests.post(self.api_url, json=payload)
-            if response.status_code != 200:
-                logger.error(f"APIエラー: status_code={response.status_code}, text={response.text}")
-                raise Exception(f"APIエラー: {response.status_code} - {response.text}")
-
-            result = response.json()
-            response_text = result.get('response', 'No analysis available')
-            if not self.clean_custom_response:
-                return response_text
-            else:
-                return self.clean_response_text(response_text)
-        except requests.exceptions.RequestException as e:
-            logger.error(f"API通信エラー: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"画像分析エラー: {str(e)}")
-            raise
-
 class AnalysisWorker(QThread):
     """
     画像分析処理を別スレッドで実行するためのワーカークラス
