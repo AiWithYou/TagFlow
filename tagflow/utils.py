@@ -100,3 +100,14 @@ def apply_clean_patterns(text, patterns):
     text = re.sub(r'[・\-•*＊\n] ?', ', ', text, flags=re.MULTILINE | re.DOTALL)
     parts = [part.strip() for part in text.split(',') if part.strip() and not part.startswith('、')]
     return ', '.join(parts)
+
+def fetch_latest_models(url="https://ollama.ai/library"):
+    """Ollamaライブラリページからモデル一覧を取得"""
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        models = re.findall(r'x-test-model-title title="([^"]+)"', response.text)
+        return sorted(set(models))
+    except Exception as e:
+        logger.warning(f"モデル一覧取得エラー: {e}")
+        return []

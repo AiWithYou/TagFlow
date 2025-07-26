@@ -18,6 +18,7 @@ from tagflow import (
     load_app_config,
     save_app_config,
     apply_clean_patterns,
+    fetch_latest_models,
 )
 
 # PySide6インポート
@@ -869,7 +870,12 @@ class ImageTaggingTab(QWidget):
         self.model_combo.setMinimumWidth(150)
         self.model_combo.setCurrentText(self.settings["model"])
         toolbar.addWidget(self.model_combo)
+
+        self.refresh_models_button = QPushButton("モデル更新")
+        self.refresh_models_button.clicked.connect(self.update_model_list)
+        toolbar.addWidget(self.refresh_models_button)
         toolbar.addSeparator()
+        self.update_model_list()
 
         url_label = QLabel("Ollama URL:")
         toolbar.addWidget(url_label)
@@ -1228,6 +1234,20 @@ class ImageTaggingTab(QWidget):
         current = self.image_list.currentItem()
         if current and str(current.image_path) == image_path:
             self.tag_display.set_tags(result)
+
+    def update_model_list(self):
+        """Ollamaライブラリからモデル一覧を取得して更新"""
+        self.refresh_models_button.setEnabled(False)
+        models = fetch_latest_models()
+        if models:
+            current = self.model_combo.currentText()
+            self.model_combo.clear()
+            self.model_combo.addItems(models)
+            if current in models:
+                self.model_combo.setCurrentText(current)
+        else:
+            QMessageBox.warning(self, "警告", "モデル一覧を取得できませんでした")
+        self.refresh_models_button.setEnabled(True)
 
 # ----------------- ファイル移動タブ -----------------
 class FileMoveTab(QWidget):
