@@ -844,7 +844,8 @@ class ImageTaggingTab(QWidget):
             "clean_patterns": loaded_config.get("clean_patterns", {
                 "initial": default_initial_patterns,
                 "additional": default_additional_patterns
-            })
+            }),
+            "max_image_size": loaded_config.get("max_image_size", 1024),
         }
         self.analyzer = None
         self.worker = None
@@ -1162,6 +1163,7 @@ class ImageTaggingTab(QWidget):
         self.settings["model"] = self.model_combo.currentText()
         self.settings["api_url"] = self.url_edit.text()
         self.settings["use_japanese"] = self.japanese_check.isChecked()
+        save_app_config(self.settings)
 
         # アナライザ生成
         self.analyzer = ImageAnalyzer(
@@ -1171,7 +1173,8 @@ class ImageTaggingTab(QWidget):
             custom_prompt=self.settings["custom_prompt"] if self.settings["custom_prompt"] else None,
             clean_custom_response=self.settings["clean_response"],
             api_url=self.settings["api_url"],
-            clean_patterns=self.settings["clean_patterns"]
+            clean_patterns=self.settings["clean_patterns"],
+            max_size=self.settings["max_image_size"],
         )
 
         # ワーカースレッド開始

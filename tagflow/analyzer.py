@@ -25,6 +25,7 @@ class ImageAnalyzer:
         clean_custom_response=True,
         api_url="http://localhost:11434/api/generate",
         clean_patterns=None,
+        max_size=None,
     ):
         self.model = model
         self.use_japanese = use_japanese
@@ -32,6 +33,7 @@ class ImageAnalyzer:
         self.custom_prompt = custom_prompt
         self.clean_custom_response = clean_custom_response
         self.api_url = api_url
+        self.max_size = max_size
         self.supported_formats = {
             ".jpg",
             ".jpeg",
@@ -51,11 +53,14 @@ class ImageAnalyzer:
         """Pillowで画像を開きBase64にエンコード"""
         try:
             with Image.open(image_path) as img:
+                if self.max_size:
+                    resample = getattr(Image, "Resampling", Image).LANCZOS
+                    img.thumbnail((self.max_size, self.max_size), resample)
                 img_buffer = io.BytesIO()
                 save_format = img.format if img.format else "PNG"
-            if save_format.upper() == "HEIF":
-                save_format = "PNG"
-            img.save(img_buffer, format=save_format)
+                if save_format.upper() == "HEIF":
+                    save_format = "PNG"
+                img.save(img_buffer, format=save_format)
             return base64.b64encode(img_buffer.getvalue()).decode("utf-8")
         except Exception as e:
             logger.error(f"画像エンコードエラー: {e}")

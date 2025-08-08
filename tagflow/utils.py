@@ -1,7 +1,10 @@
 import json
 import logging
 import re
+import time
 from pathlib import Path
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -101,13 +104,25 @@ def apply_clean_patterns(text, patterns):
     parts = [part.strip() for part in text.split(',') if part.strip() and not part.startswith('、')]
     return ', '.join(parts)
 
-def fetch_latest_models(url="https://ollama.ai/library"):
+def fetch_latest_models(url="https://ollama.ai/library", use_cache=True, cache_duration=3600):
     """Ollamaライブラリページからモデル一覧を取得"""
+    config = load_app_config() if use_cache else {}
+    cache = config.get("model_cache", {})
+    if use_cache:
+        timestamp = cache.get("timestamp", 0)
+        if time.time() - timestamp < cache_duration and cache.get("models"):
+            return cache["models"]
     try:
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-        models = re.findall(r'x-test-model-title title="([^"]+)"', response.text)
-        return sorted(set(models))
+        models = sorted(set(re.findall(r'x-test-model-title title="([^"]+)"', response.text)))
+        if use_cache:
+            config["model_cache"] = {
+                "timestamp": time.time(),
+                "models": models,
+            }
+            save_app_config(config)
+        return models
     except Exception as e:
         logger.warning(f"モデル一覧取得エラー: {e}")
-        return []
+        return cache.get("models", [])

@@ -5,6 +5,7 @@ from .utils import (
     load_app_config,
     save_app_config,
     apply_clean_patterns,
+    fetch_latest_models,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "load_app_config",
     "save_app_config",
     "apply_clean_patterns",
+    "fetch_latest_models",
 ]
