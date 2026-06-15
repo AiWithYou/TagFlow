@@ -1,0 +1,22 @@
+[
+  {
+    "label": "Gemma 3 27B Vision",
+    "model": "gemma3:27b",
+    "description": "高精度寄りの画像説明候補。VRAMと処理時間に余裕がある環境向け。"
+  },
+  {
+    "label": "Gemma 3 4B Vision",
+    "model": "gemma3:4b",
+    "description": "軽量寄りの画像説明候補。高速確認や低VRAM環境向け。"
+  },
+  {
+    "label": "LLaVA Latest",
+    "model": "llava:latest",
+    "description": "Ollama の汎用的な画像説明モデル候補。"
+  },
+  {
+    "label": "LLaVA 13B",
+    "model": "llava:13b",
+    "description": "詳細な画像説明を試すための大きめの LLaVA 候補。"
+  }
+]

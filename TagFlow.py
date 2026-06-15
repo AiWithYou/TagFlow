@@ -43,6 +43,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+APP_DIR = Path(__file__).resolve().parent
+MODEL_PRESETS_FILE = APP_DIR / "presets" / "model_presets.json"
+PROMPT_PRESETS_FILE = APP_DIR / "presets" / "prompt_presets.json"
+VALID_DETAIL_LEVELS = {"brief", "standard", "detailed"}
+
 # ----------------- デフォルト削除パターン -----------------
 default_initial_patterns = [
     r"^Here.*?:",            # "Here..." で始まる前置きを削除
@@ -130,6 +135,64 @@ def save_app_config(config, filepath=None):
             logger.info(f"設定を {config_file} に保存しました。")
     except Exception as e:
         logger.error(f"設定保存エラー: {e}")
+
+def load_json_list(filepath, required_text_fields):
+    """
+    JSON配列のプリセットファイルを読み込み、必須文字列フィールドを検証する
+    """
+    preset_file = Path(filepath)
+    try:
+        with open(preset_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"プリセットファイルが見つかりません: {preset_file}") from e
+    except json.JSONDecodeError as e:
+        raise ValueError(f"プリセットファイルのJSON形式が不正です: {preset_file}: {e}") from e
+    except OSError as e:
+        raise OSError(f"プリセットファイルを読み込めません: {preset_file}: {e}") from e
+
+    if not isinstance(data, list) or not data:
+        raise ValueError(f"プリセットファイルは空でないJSON配列である必要があります: {preset_file}")
+
+    for index, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"{preset_file} の {index + 1} 件目はオブジェクトである必要があります。")
+        for field in required_text_fields:
+            value = item.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{preset_file} の {index + 1} 件目に必須文字列フィールド {field} がありません。")
+
+    return data
+
+def load_model_presets():
+    """
+    Ollamaモデル候補を読み込む
+    """
+    return load_json_list(MODEL_PRESETS_FILE, ("label", "model"))
+
+def load_prompt_presets():
+    """
+    プロンプト候補を読み込み、詳細設定で使う項目を検証する
+    """
+    presets = load_json_list(PROMPT_PRESETS_FILE, ("id", "label", "prompt", "detail_level"))
+    seen_ids = set()
+    for index, preset in enumerate(presets):
+        preset_id = preset["id"]
+        if preset_id in seen_ids:
+            raise ValueError(f"{PROMPT_PRESETS_FILE} の id が重複しています: {preset_id}")
+        seen_ids.add(preset_id)
+
+        if preset["detail_level"] not in VALID_DETAIL_LEVELS:
+            raise ValueError(
+                f"{PROMPT_PRESETS_FILE} の {index + 1} 件目の detail_level が不正です: "
+                f"{preset['detail_level']}"
+            )
+        if not isinstance(preset.get("clean_response"), bool):
+            raise ValueError(f"{PROMPT_PRESETS_FILE} の {index + 1} 件目に clean_response(bool) が必要です。")
+        if not isinstance(preset.get("use_japanese"), bool):
+            raise ValueError(f"{PROMPT_PRESETS_FILE} の {index + 1} 件目に use_japanese(bool) が必要です。")
+
+    return presets
 
 def apply_clean_patterns(text, patterns):
     """
@@ -297,7 +360,7 @@ class ImageAnalyzer:
     """
     def __init__(
         self,
-        model="gemma3:27b",
+        model,
         use_japanese=False,
         detail_level="standard",
         custom_prompt=None,
@@ -828,8 +891,9 @@ class SettingsDialog(QDialog):
     """
     画像タグ付けの詳細設定を行うダイアログ
     """
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, prompt_presets=None):
         super().__init__(parent)
+        self.prompt_presets = prompt_presets or []
         self.setWindowTitle("詳細設定")
         self.setMinimumWidth(500)
         layout = QVBoxLayout(self)
@@ -837,6 +901,17 @@ class SettingsDialog(QDialog):
         # カスタムプロンプト設定
         prompt_group = QGroupBox("カスタムプロンプト")
         prompt_layout = QVBoxLayout()
+
+        preset_layout = QHBoxLayout()
+        preset_layout.addWidget(QLabel("プロンプト候補:"))
+        self.prompt_preset_combo = QComboBox()
+        self.prompt_preset_combo.addItem("手動入力", None)
+        for preset in self.prompt_presets:
+            self.prompt_preset_combo.addItem(preset["label"], preset)
+        self.prompt_preset_combo.currentIndexChanged.connect(self.apply_prompt_preset)
+        preset_layout.addWidget(self.prompt_preset_combo, 1)
+        prompt_layout.addLayout(preset_layout)
+
         self.custom_prompt = QTextEdit()
         self.custom_prompt.setPlaceholderText("カスタムプロンプトを入力（空白ならデフォルト使用）")
         self.custom_prompt.setMinimumHeight(100)
@@ -896,6 +971,61 @@ class SettingsDialog(QDialog):
         else:
             self.detail_level = "detailed"
 
+    def _set_detail_level(self, detail_level):
+        """
+        detail_level を検証してラジオボタンへ反映する
+        """
+        if detail_level not in VALID_DETAIL_LEVELS:
+            raise ValueError(f"未知の detail_level です: {detail_level}")
+        self.detail_level = detail_level
+        if detail_level == "brief":
+            self.brief_radio.setChecked(True)
+        elif detail_level == "standard":
+            self.standard_radio.setChecked(True)
+        else:
+            self.detailed_radio.setChecked(True)
+
+    def apply_prompt_preset(self, index):
+        """
+        選択したプロンプト候補をフォームへ反映する
+        """
+        preset = self.prompt_preset_combo.itemData(index)
+        if preset is None:
+            return
+        self.custom_prompt.setPlainText(preset["prompt"])
+        self.clean_response.setChecked(preset["clean_response"])
+        self._set_detail_level(preset["detail_level"])
+
+    def _matching_prompt_preset_id(self, prompt):
+        """
+        現在の本文に一致するプリセットIDを返す
+        """
+        for preset in self.prompt_presets:
+            if prompt == preset["prompt"].strip():
+                return preset["id"]
+        return ""
+
+    def _select_prompt_preset(self, preset_id):
+        """
+        指定IDのプロンプト候補を選択状態にする
+        """
+        if not preset_id:
+            self.prompt_preset_combo.setCurrentIndex(0)
+            return
+        for index in range(1, self.prompt_preset_combo.count()):
+            preset = self.prompt_preset_combo.itemData(index)
+            if preset and preset["id"] == preset_id:
+                self.prompt_preset_combo.setCurrentIndex(index)
+                return
+        raise ValueError(f"未知のプロンプト候補IDです: {preset_id}")
+
+    def _sync_prompt_preset_combo(self):
+        """
+        現在の本文と一致する候補をコンボボックスへ反映する
+        """
+        preset_id = self._matching_prompt_preset_id(self.custom_prompt.toPlainText().strip())
+        self._select_prompt_preset(preset_id)
+
     def load_config(self):
         """
         設定ファイル（JSON）から読み込んでフォームに適用
@@ -908,13 +1038,12 @@ class SettingsDialog(QDialog):
             if "clean_response" in config:
                 self.clean_response.setChecked(config["clean_response"])
             if "detail_level" in config:
-                self.detail_level = config["detail_level"]
-                if self.detail_level == "brief":
-                    self.brief_radio.setChecked(True)
-                elif self.detail_level == "standard":
-                    self.standard_radio.setChecked(True)
-                else:
-                    self.detailed_radio.setChecked(True)
+                self._set_detail_level(config["detail_level"])
+            prompt_preset_id = config.get("prompt_preset_id", "")
+            if prompt_preset_id:
+                self._select_prompt_preset(prompt_preset_id)
+            else:
+                self._sync_prompt_preset_combo()
             QMessageBox.information(self, "ロード完了", "設定ファイルをロードしました。")
 
     def save_config(self):
@@ -931,11 +1060,21 @@ class SettingsDialog(QDialog):
         """
         現在のフォーム入力から設定を辞書形式で取得
         """
-        return {
-            "custom_prompt": self.custom_prompt.toPlainText().strip(),
+        prompt = self.custom_prompt.toPlainText().strip()
+        prompt_preset_id = self._matching_prompt_preset_id(prompt)
+        settings = {
+            "custom_prompt": prompt,
             "clean_response": self.clean_response.isChecked(),
-            "detail_level": self.detail_level
+            "detail_level": self.detail_level,
+            "prompt_preset_id": prompt_preset_id
         }
+        for preset in self.prompt_presets:
+            if preset["id"] == prompt_preset_id:
+                settings["use_japanese"] = preset["use_japanese"]
+                break
+        if not prompt_preset_id:
+            del settings["prompt_preset_id"]
+        return settings
 
     def set_settings(self, settings):
         """
@@ -946,13 +1085,12 @@ class SettingsDialog(QDialog):
         if "clean_response" in settings:
             self.clean_response.setChecked(settings["clean_response"])
         if "detail_level" in settings:
-            self.detail_level = settings["detail_level"]
-            if self.detail_level == "brief":
-                self.brief_radio.setChecked(True)
-            elif self.detail_level == "standard":
-                self.standard_radio.setChecked(True)
-            else:
-                self.detailed_radio.setChecked(True)
+            self._set_detail_level(settings["detail_level"])
+        prompt_preset_id = settings.get("prompt_preset_id", "")
+        if prompt_preset_id:
+            self._select_prompt_preset(prompt_preset_id)
+        else:
+            self._sync_prompt_preset_combo()
 
 # ----------------- AIチャットタブ -----------------
 class ChatTab(QWidget):
@@ -1065,14 +1203,18 @@ class ImageTaggingTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         loaded_config = load_app_config()
+        self.model_presets = load_model_presets()
+        self.prompt_presets = load_prompt_presets()
+        default_model = self.model_presets[0]["model"]
         # 設定を辞書にまとめて保持
         self.settings = {
-            "model": loaded_config.get("model", "gemma3:27b"),
+            "model": loaded_config.get("model", default_model),
             "api_url": loaded_config.get("api_url", "http://localhost:11434/api/generate"),
             "use_japanese": loaded_config.get("use_japanese", False),
             "custom_prompt": loaded_config.get("custom_prompt", ""),
             "clean_response": loaded_config.get("clean_response", True),
             "detail_level": loaded_config.get("detail_level", "standard"),
+            "prompt_preset_id": loaded_config.get("prompt_preset_id", ""),
             "clean_patterns": loaded_config.get("clean_patterns", {
                 "initial": default_initial_patterns,
                 "additional": default_additional_patterns
@@ -1097,7 +1239,13 @@ class ImageTaggingTab(QWidget):
         toolbar.addWidget(model_label)
 
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["gemma3:27b", "gemma3:4b"])
+        for preset in self.model_presets:
+            self.model_combo.addItem(preset["model"])
+            index = self.model_combo.count() - 1
+            tooltip = preset["label"]
+            if "description" in preset:
+                tooltip = f"{tooltip}\n{preset['description']}"
+            self.model_combo.setItemData(index, tooltip, Qt.ToolTipRole)
         self.model_combo.setEditable(True)
         self.model_combo.setMinimumWidth(150)
         self.model_combo.setCurrentText(self.settings["model"])
@@ -1235,17 +1383,22 @@ class ImageTaggingTab(QWidget):
         """
         詳細設定ダイアログを開き、プロンプトやクリーニング設定を編集する
         """
-        dialog = SettingsDialog(self)
+        dialog = SettingsDialog(self, prompt_presets=self.prompt_presets)
         dialog.set_settings({
             "custom_prompt": self.settings["custom_prompt"],
             "clean_response": self.settings["clean_response"],
-            "detail_level": self.settings["detail_level"]
+            "detail_level": self.settings["detail_level"],
+            "prompt_preset_id": self.settings["prompt_preset_id"]
         })
         if dialog.exec():
             new_settings = dialog.get_settings()
             self.settings["custom_prompt"] = new_settings["custom_prompt"]
             self.settings["clean_response"] = new_settings["clean_response"]
             self.settings["detail_level"] = new_settings["detail_level"]
+            self.settings["prompt_preset_id"] = new_settings.get("prompt_preset_id", "")
+            if "use_japanese" in new_settings:
+                self.settings["use_japanese"] = new_settings["use_japanese"]
+                self.japanese_check.setChecked(new_settings["use_japanese"])
 
     def add_folder(self):
         """

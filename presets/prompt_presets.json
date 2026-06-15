@@ -1,0 +1,47 @@
+[
+  {
+    "id": "ja_caption_standard",
+    "label": "日本語: 標準説明",
+    "prompt": "この画像を2〜3文で説明してください。主要な被写体、行動、背景、雰囲気に焦点を当て、余計な前置きは不要です。",
+    "detail_level": "standard",
+    "clean_response": true,
+    "use_japanese": true,
+    "description": "通常の日本語キャプション生成向け。"
+  },
+  {
+    "id": "ja_caption_detailed",
+    "label": "日本語: 詳細説明",
+    "prompt": "この画像を4〜5文で詳しく説明してください。視覚的な要素、人物や物体の関係、行動、背景、雰囲気を具体的に含めてください。余計な前置きは不要です。",
+    "detail_level": "detailed",
+    "clean_response": true,
+    "use_japanese": true,
+    "description": "検索しやすい長めの説明文を作る候補。"
+  },
+  {
+    "id": "ja_tag_keywords",
+    "label": "日本語: タグ抽出",
+    "prompt": "画像検索に使いやすいタグを日本語でカンマ区切りで出力してください。被写体、行動、場所、色、雰囲気、構図を優先し、説明文や前置きは書かないでください。",
+    "detail_level": "brief",
+    "clean_response": true,
+    "use_japanese": true,
+    "description": "ファイル移動タブのキーワード検索に使いやすいタグ生成候補。"
+  },
+  {
+    "id": "en_caption_standard",
+    "label": "English: Standard caption",
+    "prompt": "Describe this image in 2-3 sentences, focusing on the main subjects, actions, background, and mood. Do not include introductory phrases.",
+    "detail_level": "standard",
+    "clean_response": true,
+    "use_japanese": false,
+    "description": "General English caption preset."
+  },
+  {
+    "id": "en_tag_keywords",
+    "label": "English: Tag keywords",
+    "prompt": "Output searchable image tags in English as a comma-separated list. Prioritize subjects, actions, setting, colors, mood, and composition. Do not include explanations or introductory phrases.",
+    "detail_level": "brief",
+    "clean_response": true,
+    "use_japanese": false,
+    "description": "English keyword preset for search and file organization."
+  }
+]
