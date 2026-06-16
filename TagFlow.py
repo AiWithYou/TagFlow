@@ -11,6 +11,8 @@ import sys
 import json
 import shutil
 import platform
+import hashlib
+from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageQt
 from threading import Thread
@@ -46,7 +48,18 @@ logger = logging.getLogger(__name__)
 APP_DIR = Path(__file__).resolve().parent
 MODEL_PRESETS_FILE = APP_DIR / "presets" / "model_presets.json"
 PROMPT_PRESETS_FILE = APP_DIR / "presets" / "prompt_presets.json"
+TRANSFORM_PRESETS_FILE = APP_DIR / "presets" / "transform_presets.json"
+DEFAULT_OLLAMA_API_URL = "http://localhost:11434/api/generate"
+SUPPORTED_IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.heic', '.avif'}
 VALID_DETAIL_LEVELS = {"brief", "standard", "detailed"}
+VALID_TRANSFORM_MODES = {
+    "translate_ja_to_en",
+    "translate_en_to_ja",
+    "danbooru_tags",
+    "natural_prompt_en",
+    "natural_prompt_ja",
+    "lora_caption_en",
+}
 
 # ----------------- デフォルト削除パターン -----------------
 default_initial_patterns = [
@@ -191,6 +204,41 @@ def load_prompt_presets():
             raise ValueError(f"{PROMPT_PRESETS_FILE} の {index + 1} 件目に clean_response(bool) が必要です。")
         if not isinstance(preset.get("use_japanese"), bool):
             raise ValueError(f"{PROMPT_PRESETS_FILE} の {index + 1} 件目に use_japanese(bool) が必要です。")
+
+    return presets
+
+def load_transform_presets():
+    """
+    テキスト変換候補を読み込み、変換に必要な項目を検証する
+    """
+    presets = load_json_list(
+        TRANSFORM_PRESETS_FILE,
+        ("id", "label", "mode", "output_suffix", "recommended_model", "prompt")
+    )
+    seen_ids = set()
+    for index, preset in enumerate(presets):
+        preset_id = preset["id"]
+        if preset_id in seen_ids:
+            raise ValueError(f"{TRANSFORM_PRESETS_FILE} の id が重複しています: {preset_id}")
+        seen_ids.add(preset_id)
+
+        mode = preset["mode"]
+        if mode not in VALID_TRANSFORM_MODES:
+            raise ValueError(f"{TRANSFORM_PRESETS_FILE} の {index + 1} 件目の mode が不正です: {mode}")
+
+        output_suffix = preset["output_suffix"]
+        if not output_suffix.startswith(".") or output_suffix == ".txt":
+            raise ValueError(
+                f"{TRANSFORM_PRESETS_FILE} の {index + 1} 件目の output_suffix が不正です: "
+                f"{output_suffix}"
+            )
+
+        if "{TEXT}" not in preset["prompt"]:
+            raise ValueError(f"{TRANSFORM_PRESETS_FILE} の {index + 1} 件目の prompt に {{TEXT}} が必要です。")
+
+        temperature = preset.get("temperature")
+        if not isinstance(temperature, (int, float)):
+            raise ValueError(f"{TRANSFORM_PRESETS_FILE} の {index + 1} 件目に temperature(number) が必要です。")
 
     return presets
 
@@ -715,6 +763,271 @@ class ChatWorker(QThread):
             self.result_ready.emit(result)
         except Exception as e:
             self.error_occurred.emit(str(e))
+
+# ----------------- テキスト変換関連 -----------------
+class TextTransformService:
+    """
+    既存txtをOllamaに渡して翻訳/タグ化/プロンプト化するサービス。
+    """
+    def __init__(self, api_url, model, timeout=120):
+        self.api_url = api_url
+        self.model = model
+        self.timeout = timeout
+
+    def build_prompt(self, preset, text, model):
+        """
+        変換プリセットからOllamaへ渡すプロンプトを構築する。
+        """
+        if not text.strip():
+            raise ValueError("変換元テキストが空です。")
+        return preset["prompt"].replace("{TEXT}", text.strip())
+
+    def transform_text(self, text, preset):
+        """
+        Ollama APIにテキスト変換を依頼し、整形済みの結果を返す。
+        """
+        payload = {
+            "model": self.model,
+            "prompt": self.build_prompt(preset, text, self.model),
+            "stream": False,
+            "options": {
+                "temperature": preset["temperature"],
+                "top_p": 0.9,
+            },
+        }
+        try:
+            response = requests.post(self.api_url, json=payload, timeout=self.timeout)
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Ollama API通信エラー: {e}") from e
+
+        if response.status_code != 200:
+            raise RuntimeError(f"Ollama APIエラー: HTTP {response.status_code} - {response.text}")
+
+        try:
+            result = response.json()
+        except ValueError as e:
+            raise RuntimeError(f"Ollama APIレスポンスのJSON形式が不正です: {e}") from e
+
+        response_text = result.get("response")
+        if not isinstance(response_text, str) or not response_text.strip():
+            raise RuntimeError("Ollama APIレスポンスに response テキストがありません。")
+
+        return self.clean_output(response_text, preset["mode"])
+
+    def clean_output(self, text, mode):
+        """
+        変換モードに応じて出力を検索・保存しやすい形へ整える。
+        """
+        text = self._strip_markdown_fence(text)
+        if mode == "danbooru_tags":
+            return self._clean_danbooru_tags(text)
+
+        text = re.sub(
+            r"^\s*(?:translation|translated text|output|result|prompt|caption|翻訳|結果|出力)\s*[:：]\s*",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = text.strip().strip('"').strip("'").strip()
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+    def _strip_markdown_fence(self, text):
+        text = text.strip()
+        text = re.sub(r"^\s*```[a-zA-Z0-9_-]*\s*", "", text)
+        text = re.sub(r"\s*```\s*$", "", text)
+        return text.strip()
+
+    def _clean_danbooru_tags(self, text):
+        text = re.sub(
+            r"^\s*(?:danbooru[- ]style tags|danbooru tags|tags|tag list|タグ|タグ一覧)\s*[:：]\s*",
+            "",
+            text.strip(),
+            flags=re.IGNORECASE,
+        )
+        text = text.replace("\n", ",")
+        text = text.replace(";", ",")
+        text = text.replace("、", ",")
+        parts = []
+        seen = set()
+        for raw_tag in text.split(","):
+            tag = re.sub(r"^\s*(?:[-*・•]+|\d+[.)）])\s*", "", raw_tag.strip())
+            tag = tag.lower()
+            tag = re.sub(r"\s+", "_", tag)
+            tag = re.sub(r"_+", "_", tag)
+            tag = tag.strip(" _.,:;[](){}\"'#")
+            if tag and tag not in seen:
+                parts.append(tag)
+                seen.add(tag)
+        return ", ".join(parts)
+
+    def get_output_path(self, image_path, preset):
+        image_path = Path(image_path)
+        return image_path.with_name(f"{image_path.stem}{preset['output_suffix']}")
+
+    def write_transform_result(self, image_path, source_path, output_path, preset, input_text, output_text, overwrite):
+        """
+        サイドカーファイルと .tagflow.json の変換履歴を書き込む。
+        """
+        output_path = Path(output_path)
+        if output_path.exists() and not overwrite:
+            raise FileExistsError(f"出力先が既に存在するためスキップします: {output_path.name}")
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(output_text)
+
+        self.update_metadata(
+            image_path=Path(image_path),
+            base_caption_path=Path(source_path),
+            output_path=output_path,
+            preset=preset,
+            input_text=input_text,
+            output_text=output_text,
+        )
+
+    def update_metadata(self, image_path, base_caption_path, output_path, preset, input_text, output_text):
+        metadata_path = image_path.with_name(f"{image_path.stem}.tagflow.json")
+        metadata = self._load_metadata(metadata_path, image_path, base_caption_path)
+        metadata["schema_version"] = 1
+        metadata["image_file"] = image_path.name
+        metadata["base_caption_file"] = base_caption_path.name
+        metadata["transforms"].append({
+            "mode": preset["mode"],
+            "source_file": base_caption_path.name,
+            "output_file": output_path.name,
+            "model": self.model,
+            "api_url": self.api_url,
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "input_sha256": self._sha256_text(input_text),
+            "output_sha256": self._sha256_text(output_text),
+        })
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+    def _load_metadata(self, metadata_path, image_path, base_caption_path):
+        default_metadata = {
+            "schema_version": 1,
+            "image_file": image_path.name,
+            "base_caption_file": base_caption_path.name,
+            "transforms": [],
+        }
+        if not metadata_path.exists():
+            return default_metadata
+
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+            if not isinstance(metadata, dict):
+                raise ValueError("メタデータのルートはオブジェクトである必要があります。")
+            transforms = metadata.get("transforms")
+            if transforms is None:
+                metadata["transforms"] = []
+            elif not isinstance(transforms, list):
+                raise ValueError("transforms は配列である必要があります。")
+            return metadata
+        except (json.JSONDecodeError, OSError, ValueError) as e:
+            backup_path = self._backup_invalid_metadata(metadata_path)
+            logger.warning(f"壊れたメタデータを退避しました: {backup_path} ({e})")
+            return default_metadata
+
+    def _backup_invalid_metadata(self, metadata_path):
+        backup_path = metadata_path.with_name(f"{metadata_path.stem}.bak.json")
+        if backup_path.exists():
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            backup_path = metadata_path.with_name(f"{metadata_path.stem}.bak.{timestamp}.json")
+        metadata_path.replace(backup_path)
+        return backup_path
+
+    def _sha256_text(self, text):
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+class TextTransformPreviewWorker(QThread):
+    """
+    選択ファイル1件のプレビュー変換をバックグラウンドで実行する。
+    """
+    result_ready = Signal(str)
+    error_occurred = Signal(str)
+
+    def __init__(self, text, preset, api_url, model):
+        super().__init__()
+        self.text = text
+        self.preset = preset
+        self.api_url = api_url
+        self.model = model
+
+    def run(self):
+        try:
+            service = TextTransformService(self.api_url, self.model)
+            self.result_ready.emit(service.transform_text(self.text, self.preset))
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+class TextTransformWorker(QThread):
+    """
+    バッチ変換をバックグラウンドで実行するワーカー。
+    """
+    progress_updated = Signal(float)
+    log_message = Signal(str)
+    item_completed = Signal(str, str)
+    item_failed = Signal(str, str)
+    transform_complete = Signal(int, int)
+
+    def __init__(self, image_paths, preset, api_url, model, overwrite=False):
+        super().__init__()
+        self.image_paths = [Path(path) for path in image_paths]
+        self.preset = preset
+        self.api_url = api_url
+        self.model = model
+        self.overwrite = overwrite
+        self.stop_requested = False
+
+    def run(self):
+        total = len(self.image_paths)
+        if total == 0:
+            self.transform_complete.emit(0, 0)
+            return
+
+        service = TextTransformService(self.api_url, self.model)
+        success = 0
+        failed = 0
+        for index, image_path in enumerate(self.image_paths, start=1):
+            if self.stop_requested:
+                self.log_message.emit("停止要求を受け取ったため、残りの処理を中断しました。")
+                break
+
+            source_path = image_path.with_suffix(".txt")
+            output_path = service.get_output_path(image_path, self.preset)
+            try:
+                if not source_path.exists():
+                    raise FileNotFoundError(f"入力txtが見つかりません: {source_path.name}")
+                if output_path.exists() and not self.overwrite:
+                    raise FileExistsError(f"出力先が既に存在するためスキップします: {output_path.name}")
+
+                with open(source_path, "r", encoding="utf-8") as f:
+                    input_text = f.read()
+                output_text = service.transform_text(input_text, self.preset)
+                service.write_transform_result(
+                    image_path=image_path,
+                    source_path=source_path,
+                    output_path=output_path,
+                    preset=self.preset,
+                    input_text=input_text,
+                    output_text=output_text,
+                    overwrite=self.overwrite,
+                )
+                success += 1
+                self.log_message.emit(f"{image_path.name}: {output_path.name} を保存しました。")
+                self.item_completed.emit(str(image_path), str(output_path))
+            except Exception as e:
+                failed += 1
+                self.log_message.emit(f"{image_path.name}: {e}")
+                self.item_failed.emit(str(image_path), str(e))
+            self.progress_updated.emit(index / total * 100)
+
+        self.transform_complete.emit(success, failed)
+
+    def stop(self):
+        self.stop_requested = True
 
 # ----------------- 削除パターンテストダイアログ -----------------
 class PatternTestDialog(QDialog):
@@ -2137,6 +2450,365 @@ class ResultEditTab(QWidget):
 
         self.log_edit.append("一括編集完了。")
 
+# ----------------- テキスト変換タブ -----------------
+class TextTransformTab(QWidget):
+    """
+    既存の画像同名txtを翻訳・タグ化・自然文プロンプト化するタブ。
+    """
+    def __init__(self, model_presets=None, parent=None):
+        super().__init__(parent)
+        self.model_presets = model_presets if model_presets is not None else load_model_presets()
+        self.transform_presets = []
+        self.preset_load_error = None
+        try:
+            self.transform_presets = load_transform_presets()
+        except Exception as e:
+            self.preset_load_error = str(e)
+
+        loaded_config = load_app_config()
+        self.initial_api_url = loaded_config.get("api_url", DEFAULT_OLLAMA_API_URL)
+        self.preview_worker = None
+        self.transform_worker = None
+        self.init_ui()
+
+    def init_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        folder_group = QGroupBox("ソース")
+        folder_layout = QGridLayout(folder_group)
+        folder_layout.addWidget(QLabel("ソースフォルダ:"), 0, 0)
+        self.source_edit = QLineEdit()
+        self.source_edit.setReadOnly(True)
+        folder_layout.addWidget(self.source_edit, 0, 1)
+        self.source_button = QPushButton("参照")
+        self.source_button.clicked.connect(self.browse_source)
+        folder_layout.addWidget(self.source_button, 0, 2)
+
+        self.include_subfolders_check = QCheckBox("サブフォルダを含める")
+        self.include_subfolders_check.stateChanged.connect(self.reload_candidates_if_ready)
+        folder_layout.addWidget(self.include_subfolders_check, 1, 1)
+        self.target_ext_label = QLabel("対象: 画像ファイル + 同名 image.txt")
+        folder_layout.addWidget(self.target_ext_label, 1, 2)
+        main_layout.addWidget(folder_group)
+
+        settings_group = QGroupBox("変換設定")
+        settings_layout = QGridLayout(settings_group)
+
+        settings_layout.addWidget(QLabel("変換モード:"), 0, 0)
+        self.mode_combo = QComboBox()
+        for preset in self.transform_presets:
+            self.mode_combo.addItem(preset["label"], preset)
+        self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
+        settings_layout.addWidget(self.mode_combo, 0, 1)
+
+        settings_layout.addWidget(QLabel("使用モデル:"), 0, 2)
+        self.model_combo = QComboBox()
+        for preset in self.model_presets:
+            self.model_combo.addItem(preset["model"])
+            index = self.model_combo.count() - 1
+            tooltip = preset["label"]
+            if "description" in preset:
+                tooltip = f"{tooltip}\n{preset['description']}"
+            self.model_combo.setItemData(index, tooltip, Qt.ToolTipRole)
+        self.model_combo.setEditable(True)
+        settings_layout.addWidget(self.model_combo, 0, 3)
+
+        settings_layout.addWidget(QLabel("API URL:"), 1, 0)
+        self.api_url_edit = QLineEdit(self.initial_api_url)
+        settings_layout.addWidget(self.api_url_edit, 1, 1)
+
+        settings_layout.addWidget(QLabel("保存先サフィックス:"), 1, 2)
+        self.suffix_label = QLabel("-")
+        settings_layout.addWidget(self.suffix_label, 1, 3)
+
+        self.overwrite_check = QCheckBox("既存サイドカーの上書きを許可")
+        self.overwrite_check.setChecked(False)
+        settings_layout.addWidget(self.overwrite_check, 2, 1)
+
+        main_layout.addWidget(settings_group)
+
+        splitter = QSplitter(Qt.Horizontal)
+
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.addWidget(QLabel("対象ファイル"))
+        self.file_list = QListWidget()
+        self.file_list.setIconSize(QSize(100, 100))
+        self.file_list.setViewMode(QListWidget.IconMode)
+        self.file_list.setResizeMode(QListWidget.Adjust)
+        self.file_list.setSpacing(10)
+        self.file_list.setSelectionMode(QListWidget.SingleSelection)
+        self.file_list.currentItemChanged.connect(self.on_file_selected)
+        left_layout.addWidget(self.file_list)
+        splitter.addWidget(left_widget)
+
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
+        text_splitter = QSplitter(Qt.Vertical)
+        input_widget = QWidget()
+        input_layout = QVBoxLayout(input_widget)
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.addWidget(QLabel("変換前テキスト"))
+        self.input_text = QTextEdit()
+        self.input_text.setReadOnly(True)
+        input_layout.addWidget(self.input_text)
+
+        output_widget = QWidget()
+        output_layout = QVBoxLayout(output_widget)
+        output_layout.setContentsMargins(0, 0, 0, 0)
+        output_layout.addWidget(QLabel("変換後プレビュー"))
+        self.output_text = QTextEdit()
+        self.output_text.setReadOnly(True)
+        output_layout.addWidget(self.output_text)
+
+        text_splitter.addWidget(input_widget)
+        text_splitter.addWidget(output_widget)
+        text_splitter.setSizes([260, 260])
+        right_layout.addWidget(text_splitter)
+        splitter.addWidget(right_widget)
+        splitter.setSizes([320, 680])
+        main_layout.addWidget(splitter, 1)
+
+        bottom_layout = QHBoxLayout()
+        status_layout = QVBoxLayout()
+        self.status_label = QLabel("準備完了")
+        status_layout.addWidget(self.status_label)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        status_layout.addWidget(self.progress_bar)
+        bottom_layout.addLayout(status_layout, 1)
+
+        self.preview_button = QPushButton("選択ファイルをプレビュー変換")
+        self.preview_button.clicked.connect(self.preview_transform)
+        self.batch_button = QPushButton("一括変換")
+        self.batch_button.clicked.connect(self.run_batch_transform)
+        self.stop_button = QPushButton("停止")
+        self.stop_button.clicked.connect(self.stop_batch_transform)
+        self.stop_button.setEnabled(False)
+        bottom_layout.addWidget(self.preview_button)
+        bottom_layout.addWidget(self.batch_button)
+        bottom_layout.addWidget(self.stop_button)
+        main_layout.addLayout(bottom_layout)
+
+        self.log_edit = QTextEdit()
+        self.log_edit.setReadOnly(True)
+        self.log_edit.setMaximumHeight(130)
+        main_layout.addWidget(self.log_edit)
+
+        if self.preset_load_error:
+            self.append_log(f"変換プリセット読み込みエラー: {self.preset_load_error}")
+            self.mode_combo.setEnabled(False)
+        else:
+            self.on_mode_changed(self.mode_combo.currentIndex())
+
+        self._update_action_buttons()
+
+    def browse_source(self):
+        folder = QFileDialog.getExistingDirectory(self, "ソースフォルダを選択")
+        if folder:
+            self.source_edit.setText(folder)
+            self.load_candidates()
+
+    def reload_candidates_if_ready(self, state=None):
+        if self.source_edit.text():
+            self.load_candidates()
+
+    def load_candidates(self):
+        folder = Path(self.source_edit.text())
+        if not folder.exists():
+            QMessageBox.warning(self, "警告", "ソースフォルダが存在しません。")
+            return
+
+        self.file_list.clear()
+        self.input_text.clear()
+        self.output_text.clear()
+        iterator = folder.rglob("*") if self.include_subfolders_check.isChecked() else folder.glob("*")
+        image_files = sorted(
+            path for path in iterator
+            if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
+        )
+        with_txt = 0
+        without_txt = 0
+        for image_path in image_files:
+            if image_path.with_suffix(".txt").exists():
+                self.file_list.addItem(ImageListItem(str(image_path)))
+                with_txt += 1
+            else:
+                without_txt += 1
+
+        self.status_label.setText(f"対象: {with_txt}件 / txtなし: {without_txt}件")
+        self.append_log(f"{folder} から image.txt を持つ画像 {with_txt} 件を読み込みました。")
+        if self.file_list.count():
+            self.file_list.setCurrentRow(0)
+        self._update_action_buttons()
+
+    def on_mode_changed(self, index):
+        preset = self.get_current_preset(show_error=False)
+        if not preset:
+            self.suffix_label.setText("-")
+            return
+        self.suffix_label.setText(preset["output_suffix"])
+        self.model_combo.setCurrentText(preset["recommended_model"])
+        self.refresh_existing_output_preview()
+
+    def on_file_selected(self, current, previous):
+        self.input_text.clear()
+        self.output_text.clear()
+        if not current:
+            self._update_action_buttons()
+            return
+
+        source_path = current.image_path.with_suffix(".txt")
+        try:
+            with open(source_path, "r", encoding="utf-8") as f:
+                self.input_text.setPlainText(f.read())
+        except Exception as e:
+            self.append_log(f"{source_path.name}: 読み込みエラー {e}")
+        self.refresh_existing_output_preview()
+        self._update_action_buttons()
+
+    def refresh_existing_output_preview(self):
+        current = self.file_list.currentItem()
+        preset = self.get_current_preset(show_error=False)
+        if not current or not preset:
+            return
+        output_path = current.image_path.with_name(f"{current.image_path.stem}{preset['output_suffix']}")
+        if output_path.exists():
+            try:
+                with open(output_path, "r", encoding="utf-8") as f:
+                    self.output_text.setPlainText(f.read())
+            except Exception as e:
+                self.append_log(f"{output_path.name}: 読み込みエラー {e}")
+        else:
+            self.output_text.clear()
+
+    def preview_transform(self):
+        current = self.file_list.currentItem()
+        if not current:
+            QMessageBox.warning(self, "警告", "プレビュー変換するファイルを選択してください。")
+            return
+        preset = self.get_current_preset()
+        if not preset:
+            return
+        model = self.model_combo.currentText().strip()
+        api_url = self.api_url_edit.text().strip()
+        if not model or not api_url:
+            QMessageBox.warning(self, "警告", "モデル名とAPI URLを入力してください。")
+            return
+        text = self.input_text.toPlainText()
+        if not text.strip():
+            QMessageBox.warning(self, "警告", "変換元テキストが空です。")
+            return
+
+        self.preview_button.setEnabled(False)
+        self.batch_button.setEnabled(False)
+        self.status_label.setText("プレビュー変換中...")
+        self.preview_worker = TextTransformPreviewWorker(text, preset, api_url, model)
+        self.preview_worker.result_ready.connect(self.on_preview_ready)
+        self.preview_worker.error_occurred.connect(self.on_preview_error)
+        self.preview_worker.finished.connect(self.on_preview_finished)
+        self.preview_worker.start()
+
+    def on_preview_ready(self, result):
+        self.output_text.setPlainText(result)
+        self.append_log("プレビュー変換が完了しました。")
+
+    def on_preview_error(self, error_message):
+        self.append_log(f"プレビュー変換エラー: {error_message}")
+        QMessageBox.critical(self, "エラー", f"プレビュー変換エラー:\n{error_message}")
+
+    def on_preview_finished(self):
+        self.preview_worker = None
+        self.status_label.setText("準備完了")
+        self._update_action_buttons()
+
+    def run_batch_transform(self):
+        if self.file_list.count() == 0:
+            QMessageBox.warning(self, "警告", "一括変換する対象ファイルがありません。")
+            return
+        preset = self.get_current_preset()
+        if not preset:
+            return
+        model = self.model_combo.currentText().strip()
+        api_url = self.api_url_edit.text().strip()
+        if not model or not api_url:
+            QMessageBox.warning(self, "警告", "モデル名とAPI URLを入力してください。")
+            return
+
+        image_paths = [str(self.file_list.item(i).image_path) for i in range(self.file_list.count())]
+        self.progress_bar.setValue(0)
+        self.status_label.setText("一括変換中...")
+        self.preview_button.setEnabled(False)
+        self.batch_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+
+        self.transform_worker = TextTransformWorker(
+            image_paths=image_paths,
+            preset=preset,
+            api_url=api_url,
+            model=model,
+            overwrite=self.overwrite_check.isChecked(),
+        )
+        self.transform_worker.progress_updated.connect(self.update_progress)
+        self.transform_worker.log_message.connect(self.append_log)
+        self.transform_worker.item_completed.connect(self.on_item_completed)
+        self.transform_worker.item_failed.connect(self.on_item_failed)
+        self.transform_worker.transform_complete.connect(self.on_batch_complete)
+        self.transform_worker.start()
+
+    def stop_batch_transform(self):
+        if self.transform_worker and self.transform_worker.isRunning():
+            self.transform_worker.stop()
+            self.stop_button.setEnabled(False)
+            self.status_label.setText("停止中...")
+
+    def on_item_completed(self, image_path, output_path):
+        current = self.file_list.currentItem()
+        if current and str(current.image_path) == image_path:
+            try:
+                with open(output_path, "r", encoding="utf-8") as f:
+                    self.output_text.setPlainText(f.read())
+            except Exception as e:
+                self.append_log(f"{Path(output_path).name}: 読み込みエラー {e}")
+
+    def on_item_failed(self, image_path, error_message):
+        logger.warning(f"テキスト変換失敗: {image_path}: {error_message}")
+
+    def on_batch_complete(self, success, failed):
+        self.stop_button.setEnabled(False)
+        self.transform_worker = None
+        self.status_label.setText(f"一括変換完了: 成功 {success} 件 / 失敗・スキップ {failed} 件")
+        self._update_action_buttons()
+
+    def update_progress(self, value):
+        self.progress_bar.setValue(int(value))
+
+    def append_log(self, message):
+        self.log_edit.append(message)
+        self.log_edit.moveCursor(QTextCursor.End)
+
+    def get_current_preset(self, show_error=True):
+        if self.preset_load_error:
+            if show_error:
+                QMessageBox.critical(self, "エラー", f"変換プリセット読み込みエラー:\n{self.preset_load_error}")
+            return None
+        preset = self.mode_combo.currentData()
+        if not preset and show_error:
+            QMessageBox.warning(self, "警告", "変換モードを選択してください。")
+        return preset
+
+    def _update_action_buttons(self):
+        has_preset = self.preset_load_error is None and self.mode_combo.count() > 0
+        has_current = self.file_list.currentItem() is not None
+        batch_running = self.transform_worker is not None and self.transform_worker.isRunning()
+        preview_running = self.preview_worker is not None and self.preview_worker.isRunning()
+        self.preview_button.setEnabled(has_preset and has_current and not batch_running and not preview_running)
+        self.batch_button.setEnabled(has_preset and self.file_list.count() > 0 and not batch_running and not preview_running)
+
 # ----------------- メインウィンドウ -----------------
 class MainWindow(QMainWindow):
     """
@@ -2166,11 +2838,13 @@ class MainWindow(QMainWindow):
             get_api_url_func=lambda: self.tagging_tab.url_edit.text(),
             get_model_func=lambda: self.tagging_tab.model_combo.currentText()
         )
+        self.text_transform_tab = TextTransformTab(model_presets=self.tagging_tab.model_presets)
 
         self.tabs.addTab(self.tagging_tab, "画像タグ付け")
         self.tabs.addTab(self.move_tab, "ファイル移動")
         self.tabs.addTab(self.result_edit_tab, "分析結果編集")
         self.tabs.addTab(self.chat_tab, "AIチャット")
+        self.tabs.addTab(self.text_transform_tab, "テキスト変換 / Text Transform")
         main_layout.addWidget(self.tabs)
 
         self.statusBar = QStatusBar()

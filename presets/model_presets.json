@@ -1,21 +1,51 @@
 [
   {
-    "label": "Gemma 3 27B Vision",
+    "label": "Gemma 4 12B Vision / 画像説明・変換 標準",
+    "model": "gemma4:12b",
+    "description": "画像説明、タグ化、自然文プロンプト化に使う標準候補。"
+  },
+  {
+    "label": "Gemma 4 E4B Vision / 軽量マルチモーダル",
+    "model": "gemma4:e4b",
+    "description": "軽量寄りの画像説明/タグ化候補。高速確認向け。"
+  },
+  {
+    "label": "Qwen3-VL 8B / 画像理解バランス",
+    "model": "qwen3-vl:8b",
+    "description": "画像理解とタグ化のバランス候補。"
+  },
+  {
+    "label": "Qwen3-VL 4B / 軽量画像理解",
+    "model": "qwen3-vl:4b",
+    "description": "軽量画像理解候補。速度重視の確認向け。"
+  },
+  {
+    "label": "TranslateGemma 12B / 翻訳 標準",
+    "model": "translategemma:12b",
+    "description": "日本語/英語翻訳の標準候補。"
+  },
+  {
+    "label": "TranslateGemma 4B / 軽量翻訳",
+    "model": "translategemma:4b",
+    "description": "高速な日本語/英語翻訳候補。翻訳プレビューや大量処理向け。"
+  },
+  {
+    "label": "Gemma 3 27B Vision / 既存互換",
     "model": "gemma3:27b",
     "description": "高精度寄りの画像説明候補。VRAMと処理時間に余裕がある環境向け。"
   },
   {
-    "label": "Gemma 3 4B Vision",
+    "label": "Gemma 3 4B Vision / 既存互換",
     "model": "gemma3:4b",
     "description": "軽量寄りの画像説明候補。高速確認や低VRAM環境向け。"
   },
   {
-    "label": "LLaVA Latest",
+    "label": "LLaVA Latest / 既存互換",
     "model": "llava:latest",
     "description": "Ollama の汎用的な画像説明モデル候補。"
   },
   {
-    "label": "LLaVA 13B",
+    "label": "LLaVA 13B / 既存互換",
     "model": "llava:13b",
     "description": "詳細な画像説明を試すための大きめの LLaVA 候補。"
   }

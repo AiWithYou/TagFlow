@@ -1,0 +1,56 @@
+[
+  {
+    "id": "translate_ja_to_en",
+    "label": "日本語 → English 翻訳",
+    "mode": "translate_ja_to_en",
+    "output_suffix": ".en.txt",
+    "recommended_model": "translategemma:12b",
+    "temperature": 0.1,
+    "prompt": "You are a professional Japanese (ja) to English (en) translator. Your goal is to accurately convey the meaning and nuances of the original Japanese text while adhering to English grammar, vocabulary, and cultural sensitivities.\nProduce only the English translation, without any additional explanations or commentary. Please translate the following Japanese text into English:\n\n{TEXT}"
+  },
+  {
+    "id": "translate_en_to_ja",
+    "label": "English → 日本語 翻訳",
+    "mode": "translate_en_to_ja",
+    "output_suffix": ".ja.txt",
+    "recommended_model": "translategemma:12b",
+    "temperature": 0.1,
+    "prompt": "You are a professional English (en) to Japanese (ja) translator. Your goal is to accurately convey the meaning and nuances of the original English text while adhering to Japanese grammar, vocabulary, and cultural sensitivities.\nProduce only the Japanese translation, without any additional explanations or commentary. Please translate the following English text into Japanese:\n\n{TEXT}"
+  },
+  {
+    "id": "danbooru_tags_from_caption",
+    "label": "Caption → Danbooru tags",
+    "mode": "danbooru_tags",
+    "output_suffix": ".danbooru.txt",
+    "recommended_model": "gemma4:12b",
+    "temperature": 0.1,
+    "prompt": "Convert the following image caption into Danbooru-style tags. Output only a comma-separated list of lowercase English tags. Use underscores instead of spaces. Remove duplicates. Prioritize visible subjects, appearance, pose, clothing, setting, composition, lighting, and mood. Do not add explanations, Markdown, bullets, or introductory text.\n\nCaption:\n{TEXT}"
+  },
+  {
+    "id": "natural_prompt_en",
+    "label": "Caption → English natural prompt",
+    "mode": "natural_prompt_en",
+    "output_suffix": ".prompt.txt",
+    "recommended_model": "gemma4:12b",
+    "temperature": 0.3,
+    "prompt": "Rewrite the following image caption as a polished English text-to-image prompt. Preserve the visible subject, composition, background, lighting, atmosphere, style, and important details. Output only the prompt. Do not add explanations or Markdown.\n\nCaption:\n{TEXT}"
+  },
+  {
+    "id": "natural_prompt_ja",
+    "label": "Caption → 日本語自然文プロンプト",
+    "mode": "natural_prompt_ja",
+    "output_suffix": ".prompt_ja.txt",
+    "recommended_model": "gemma4:12b",
+    "temperature": 0.3,
+    "prompt": "次の画像キャプションを、日本語の画像生成用自然文プロンプトに整えてください。被写体、構図、背景、光、雰囲気、スタイル、重要な視覚的ディテールを保ってください。出力はプロンプト本文のみ。説明、前置き、Markdownは禁止です。\n\nキャプション:\n{TEXT}"
+  },
+  {
+    "id": "lora_caption_en",
+    "label": "Caption → LoRA caption English",
+    "mode": "lora_caption_en",
+    "output_suffix": ".lora.txt",
+    "recommended_model": "gemma4:12b",
+    "temperature": 0.2,
+    "prompt": "Convert the following image caption into a concise LoRA training caption in English. Keep factual visible details. Prefer comma-separated phrases. Include subject, appearance, clothing, pose, scene, camera/composition, and style when present. Do not invent identity or copyrighted character names unless explicitly present in the input. Output only the caption.\n\nCaption:\n{TEXT}"
+  }
+]
