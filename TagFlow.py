@@ -242,11 +242,25 @@ def load_transform_presets():
 
     return presets
 
+def strip_model_channel_markers(text):
+    """
+    一部のチャット系モデルが返す channel 制御トークンを取り除く。
+    """
+    text = re.sub(
+        r"^\s*<\|channel\>\s*(?:thought|analysis|final)?\s*(?:\r?\n)?\s*<channel\|>\s*",
+        "",
+        text,
+        flags=re.IGNORECASE
+    )
+    text = re.sub(r"<\|channel\>\s*(?:thought|analysis|final)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"<channel\|>\s*", "", text, flags=re.IGNORECASE)
+    return text.strip()
+
 def apply_clean_patterns(text, patterns):
     """
     与えられたテキストに対して、初期および追加パターンを適用してクリーニングを行う
     """
-    text = text.strip()
+    text = strip_model_channel_markers(text)
     # 初期パターン適用
     for pattern in patterns.get("initial", []):
         text = re.sub(pattern, "", text, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL).strip()
@@ -818,6 +832,7 @@ class TextTransformService:
         """
         変換モードに応じて出力を検索・保存しやすい形へ整える。
         """
+        text = strip_model_channel_markers(text)
         text = self._strip_markdown_fence(text)
         if mode == "danbooru_tags":
             return self._clean_danbooru_tags(text)
