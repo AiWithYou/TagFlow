@@ -30,6 +30,11 @@
     "description": "高速な日本語/英語翻訳候補。翻訳プレビューや大量処理向け。"
   },
   {
+    "label": "OpenYourMind Gemma 4 12B Abliterated Uncensored / GGUF Q4_K_M",
+    "model": "hf.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF:Q4_K_M",
+    "description": "OpenYourMind/gemma-4-12B-it-abliterated-uncensored の Ollama 互換 GGUF 量子化候補。初回実行時に Hugging Face から約7.5GBのモデルを取得します。"
+  },
+  {
     "label": "Gemma 3 27B Vision / 既存互換",
     "model": "gemma3:27b",
     "description": "高精度寄りの画像説明候補。VRAMと処理時間に余裕がある環境向け。"

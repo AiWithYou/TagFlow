@@ -84,6 +84,7 @@ HEIC/AVIF を扱う場合は `pillow_heif` が必要です。
 | Qwen3-VL 4B / 軽量画像理解 | `qwen3-vl:4b` | 軽量な画像理解候補 |
 | TranslateGemma 12B / 翻訳 標準 | `translategemma:12b` | 日本語/英語翻訳の標準候補 |
 | TranslateGemma 4B / 軽量翻訳 | `translategemma:4b` | 高速な翻訳プレビューや大量処理 |
+| OpenYourMind Gemma 4 12B Abliterated Uncensored / GGUF Q4_K_M | `hf.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF:Q4_K_M` | OpenYourMind の Gemma 4 12B abliterated/uncensored 系を Ollama から試す候補 |
 | Gemma 3 27B Vision / 既存互換 | `gemma3:27b` | 高精度寄りの画像説明 |
 | Gemma 3 4B Vision / 既存互換 | `gemma3:4b` | 軽量、高速確認 |
 | LLaVA Latest / 既存互換 | `llava:latest` | 汎用的な画像説明 |
@@ -360,6 +361,29 @@ ollama pull translategemma:12b
 ollama pull translategemma:4b
 ```
 
+OpenYourMind の `gemma-4-12B-it-abliterated-uncensored` を Ollama 経由で試す場合は、フル BF16 の Hugging Face repo ではなく、Ollama が直接扱える GGUF 量子化版を使います。
+
+```powershell
+ollama run hf.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF:Q4_K_M "Reply with exactly: TagFlow model test OK"
+```
+
+TagFlow のモデル候補にも次の Ollama モデル名を追加しています。
+
+```text
+hf.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF:Q4_K_M
+```
+
+この GGUF は `OpenYourMind/gemma-4-12B-it-abliterated-uncensored` の量子化版です。初回実行時は Hugging Face からモデルを取得するため、ネットワークや CDN 状態によって時間がかかることがあります。`Q4_K_M` は約 7.5GB 級です。
+
+OpenYourMind の元 repo は BF16 フル重みで、目安として合計約 24GB のファイルを扱います。Transformers で直接使う用途には向いていますが、TagFlow の標準 API は Ollama の `/api/generate` なので、通常は上記の GGUF 版を選びます。
+
+このモデルは abliterated / uncensored 系です。安全フィルタが弱められているため、用途、出力内容、公開・再配布の扱いは利用者側で確認してください。TagFlow ではローカル Ollama へ入力を送るだけで、出力の内容制御は選択したモデルに依存します。
+
+参照:
+
+- [OpenYourMind/gemma-4-12B-it-abliterated-uncensored](https://huggingface.co/OpenYourMind/gemma-4-12B-it-abliterated-uncensored)
+- [mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF](https://huggingface.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF)
+
 用途別の目安:
 
 | 目的 | まず試すモデル |
@@ -368,6 +392,7 @@ ollama pull translategemma:4b
 | 日本語/英語翻訳 | `translategemma:12b`, `translategemma:4b` |
 | Danbooru タグ化 | `gemma4:12b`, `gemma4:e4b` |
 | 自然文プロンプト化 | `gemma4:12b` |
+| OpenYourMind Gemma 4 12B 系の検証 | `hf.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF:Q4_K_M` |
 | 軽量に大量確認する | `gemma4:e4b`, `translategemma:4b` |
 
 起動:
@@ -737,6 +762,23 @@ python -m json.tool presets/transform_presets.json
 ```powershell
 ollama list
 ```
+
+### Hugging Face GGUF の取得がタイムアウトする
+
+`hf.co/...` 形式のモデルを初めて指定すると、Ollama が Hugging Face から GGUF を取得します。次のようなエラーが出た場合は、モデル取得の段階で CDN 接続がタイムアウトしています。
+
+```text
+pulling manifest
+Error: Head "https://...hf.co/...gguf...": read tcp ... wsarecv: A connection attempt failed
+```
+
+対処:
+
+- 時間を置いて同じ `ollama run hf.co/...` を再実行する。
+- VPN、プロキシ、ファイアウォール、DNS を確認する。
+- ブラウザで Hugging Face のモデルページを開き、アクセスできるか確認する。
+- 軽い量子化を使いたい場合は `Q3_K_M` や `Q4_K_S` などの小さいタグを検討する。
+- 取得が完了したら `ollama list` にモデルが表示され、TagFlow からも同じモデル名で使えます。
 
 ### 画像が読み込めない
 
