@@ -4,6 +4,16 @@ TagFlow は、ローカルで動作する Ollama または LM Studio のAIモデ
 
 画像そのものをクラウドへ送らず、ローカルの Ollama API または LM Studio の OpenAI 互換 API に送信して分析するため、個人写真、制作素材、学習データ、業務用画像を手元で整理したい場面に向いています。
 
+## 現在の対応状況
+
+2026-06-20 時点の main では、画像タグ付け、AIチャット、テキスト変換で `Ollama` と `LM Studio` を選択できます。
+
+- Ollama は `http://localhost:11434/api/generate` を使います。
+- LM Studio は OpenAI 互換の `http://localhost:1234/v1/chat/completions` を使います。
+- LM Studio 選択時、TagFlow は `ollama serve` を自動起動しません。LM Studio アプリ、または `lms server start` でサーバを起動してください。
+- ダークモードは `設定 > テーマ > ダークモード` から切り替えできます。
+- README には LM Studio + ダークモードのGUIスクリーンショットを掲載しています。
+
 ## できること
 
 - 画像をドラッグ＆ドロップして、Ollama または LM Studio で説明文やタグを生成する。
