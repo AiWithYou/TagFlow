@@ -19,7 +19,7 @@ from threading import Thread
 
 # PySide6インポート
 from PySide6.QtGui import (
-    QAction, QPixmap, QIcon, QImage, QColor, QPalette,
+    QAction, QActionGroup, QPixmap, QIcon, QImage, QColor, QPalette,
     QFont, QTextCursor
 )
 from PySide6.QtWidgets import (
@@ -50,6 +50,21 @@ MODEL_PRESETS_FILE = APP_DIR / "presets" / "model_presets.json"
 PROMPT_PRESETS_FILE = APP_DIR / "presets" / "prompt_presets.json"
 TRANSFORM_PRESETS_FILE = APP_DIR / "presets" / "transform_presets.json"
 DEFAULT_OLLAMA_API_URL = "http://localhost:11434/api/generate"
+DEFAULT_LM_STUDIO_API_URL = "http://localhost:1234/v1/chat/completions"
+API_PROVIDER_OLLAMA = "ollama"
+API_PROVIDER_LM_STUDIO = "lm_studio"
+DEFAULT_API_PROVIDER = API_PROVIDER_OLLAMA
+API_PROVIDER_CHOICES = (
+    (API_PROVIDER_OLLAMA, "Ollama"),
+    (API_PROVIDER_LM_STUDIO, "LM Studio"),
+)
+API_PROVIDER_LABELS = dict(API_PROVIDER_CHOICES)
+DEFAULT_API_URLS = {
+    API_PROVIDER_OLLAMA: DEFAULT_OLLAMA_API_URL,
+    API_PROVIDER_LM_STUDIO: DEFAULT_LM_STUDIO_API_URL,
+}
+DEFAULT_THEME = "light"
+VALID_THEMES = {"light", "dark"}
 SUPPORTED_IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.heic', '.avif'}
 VALID_DETAIL_LEVELS = {"brief", "standard", "detailed"}
 VALID_TRANSFORM_MODES = {
@@ -179,7 +194,7 @@ def load_json_list(filepath, required_text_fields):
 
 def load_model_presets():
     """
-    Ollamaモデル候補を読み込む
+    AIモデル候補を読み込む
     """
     return load_json_list(MODEL_PRESETS_FILE, ("label", "model"))
 
@@ -256,6 +271,125 @@ def strip_model_channel_markers(text):
     text = re.sub(r"<channel\|>\s*", "", text, flags=re.IGNORECASE)
     return text.strip()
 
+def normalize_api_provider(api_provider):
+    if not isinstance(api_provider, str) or api_provider not in API_PROVIDER_LABELS:
+        valid = ", ".join(API_PROVIDER_LABELS.keys())
+        raise ValueError(f"未対応のAI接続先です: {api_provider!r}。有効値: {valid}")
+    return api_provider
+
+def api_provider_display_name(api_provider):
+    return API_PROVIDER_LABELS[normalize_api_provider(api_provider)]
+
+def provider_default_api_url(api_provider):
+    api_provider = normalize_api_provider(api_provider)
+    return DEFAULT_API_URLS[api_provider]
+
+def normalize_theme(theme):
+    if not isinstance(theme, str) or theme not in VALID_THEMES:
+        valid = ", ".join(sorted(VALID_THEMES))
+        raise ValueError(f"未対応のテーマです: {theme!r}。有効値: {valid}")
+    return theme
+
+def build_ai_request_payload(
+    api_provider,
+    model,
+    prompt,
+    images=None,
+    image_mime_types=None,
+    temperature=None,
+    top_p=None,
+):
+    """
+    選択されたAI接続先に合わせてリクエストpayloadを構築する。
+    """
+    api_provider = normalize_api_provider(api_provider)
+    model = model.strip() if isinstance(model, str) else ""
+    prompt = prompt.strip() if isinstance(prompt, str) else ""
+    if not model:
+        raise ValueError("モデル名が空です。")
+    if not prompt:
+        raise ValueError("プロンプトが空です。")
+
+    images = images or []
+    if api_provider == API_PROVIDER_OLLAMA:
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+        }
+        if images:
+            payload["images"] = images
+        options = {}
+        if temperature is not None:
+            options["temperature"] = temperature
+        if top_p is not None:
+            options["top_p"] = top_p
+        if options:
+            payload["options"] = options
+        return payload
+
+    if api_provider == API_PROVIDER_LM_STUDIO:
+        if images:
+            if not image_mime_types or len(image_mime_types) != len(images):
+                raise ValueError("LM Studioの画像入力には画像ごとのMIMEタイプが必要です。")
+            content = [{"type": "text", "text": prompt}]
+            for base64_image, mime_type in zip(images, image_mime_types):
+                content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{base64_image}"
+                    }
+                })
+        else:
+            content = prompt
+
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": content}
+            ],
+            "stream": False,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if top_p is not None:
+            payload["top_p"] = top_p
+        return payload
+
+    raise ValueError(f"未対応のAI接続先です: {api_provider!r}")
+
+def extract_ai_response_text(api_provider, result):
+    """
+    選択されたAI接続先のレスポンスから本文だけを取り出す。
+    """
+    api_provider = normalize_api_provider(api_provider)
+    provider_name = api_provider_display_name(api_provider)
+    if not isinstance(result, dict):
+        raise RuntimeError(f"{provider_name} APIレスポンスのルートがJSONオブジェクトではありません。")
+
+    if api_provider == API_PROVIDER_OLLAMA:
+        response_text = result.get("response")
+        if isinstance(response_text, str) and response_text.strip():
+            return response_text
+        raise RuntimeError("Ollama APIレスポンスに response テキストがありません。")
+
+    if api_provider == API_PROVIDER_LM_STUDIO:
+        choices = result.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise RuntimeError("LM Studio APIレスポンスに choices がありません。")
+        first_choice = choices[0]
+        if not isinstance(first_choice, dict):
+            raise RuntimeError("LM Studio APIレスポンスの choices[0] がオブジェクトではありません。")
+        message = first_choice.get("message")
+        if not isinstance(message, dict):
+            raise RuntimeError("LM Studio APIレスポンスに message がありません。")
+        content = message.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+        raise RuntimeError("LM Studio APIレスポンスに message.content テキストがありません。")
+
+    raise ValueError(f"未対応のAI接続先です: {api_provider!r}")
+
 def apply_clean_patterns(text, patterns):
     """
     与えられたテキストに対して、初期および追加パターンを適用してクリーニングを行う
@@ -326,7 +460,7 @@ class ImagePreviewWidget(QWidget):
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumSize(300, 300)
-        self.image_label.setStyleSheet("background-color: #2a2a2a; border-radius: 5px;")
+        self.image_label.setStyleSheet("background-color: #202124; color: #f1f3f4; border-radius: 5px;")
         layout.addWidget(self.image_label)
 
     def set_image(self, image_path):
@@ -384,7 +518,7 @@ class TagDisplayWidget(QWidget):
         self.text_display = QTextEdit()
         self.text_display.setReadOnly(True)
         self.text_display.setMinimumHeight(100)
-        self.text_display.setStyleSheet("background-color: #ffffff; border-radius: 5px; color: black;")
+        self.text_display.setObjectName("tagDisplay")
         layout.addWidget(self.text_display)
 
     def set_tags(self, tags_text):
@@ -427,7 +561,8 @@ class ImageAnalyzer:
         detail_level="standard",
         custom_prompt=None,
         clean_custom_response=True,
-        api_url="http://localhost:11434/api/generate",
+        api_provider=API_PROVIDER_OLLAMA,
+        api_url=DEFAULT_OLLAMA_API_URL,
         clean_patterns=None
     ):
         """
@@ -436,6 +571,7 @@ class ImageAnalyzer:
         :param detail_level: 'brief', 'standard', 'detailed' の3段階
         :param custom_prompt: カスタムプロンプト文字列
         :param clean_custom_response: Trueの場合、余計な前置きを自動的に削除
+        :param api_provider: AI接続先（ollama / lm_studio）
         :param api_url: APIエンドポイントのURL
         :param clean_patterns: 削除・置換パターン辞書
         """
@@ -444,6 +580,7 @@ class ImageAnalyzer:
         self.detail_level = detail_level
         self.custom_prompt = custom_prompt
         self.clean_custom_response = clean_custom_response
+        self.api_provider = normalize_api_provider(api_provider)
         self.api_url = api_url
         # HEIC対応のため、拡張子を追加
         self.supported_formats = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.heic', '.avif'}
@@ -452,24 +589,36 @@ class ImageAnalyzer:
             "additional": default_additional_patterns
         }
 
-    def encode_image(self, image_path):
+    def encode_image_data(self, image_path):
         """
-        Pillowで画像を開き、Base64にエンコードして返す
+        Pillowで画像を開き、Base64文字列とMIMEタイプを返す
         """
         try:
             with Image.open(image_path) as img:
+                source_format = img.format or "PNG"
                 # RGBモードに変換して処理
                 if img.mode not in ('RGB', 'RGBA'):
                     img = img.convert('RGBA')
                 img_buffer = io.BytesIO()
-                save_format = img.format if img.format else "PNG"
+                save_format = source_format
                 if save_format.upper() in ["HEIF", "WEBP"]:
                     save_format = "PNG"
+                if save_format.upper() in ["JPEG", "JPG"] and img.mode == "RGBA":
+                    img = img.convert("RGB")
                 img.save(img_buffer, format=save_format)
-                return base64.b64encode(img_buffer.getvalue()).decode('utf-8')
+                mime_format = "jpeg" if save_format.upper() in ["JPEG", "JPG"] else save_format.lower()
+                mime_type = f"image/{mime_format}"
+                return base64.b64encode(img_buffer.getvalue()).decode('utf-8'), mime_type
         except Exception as e:
             logger.error(f"画像エンコードエラー: {str(e)}")
             raise
+
+    def encode_image(self, image_path):
+        """
+        Pillowで画像を開き、Base64にエンコードして返す
+        """
+        base64_image, _ = self.encode_image_data(image_path)
+        return base64_image
 
     def get_prompt(self):
         """
@@ -512,20 +661,21 @@ class ImageAnalyzer:
         画像をAPIに送信して分析し、テキスト（タグ）を返す
         """
         try:
-            base64_image = self.encode_image(image_path)
-            payload = {
-                "model": self.model,
-                "prompt": self.get_prompt(),
-                "stream": False,
-                "images": [base64_image]
-            }
+            base64_image, mime_type = self.encode_image_data(image_path)
+            payload = build_ai_request_payload(
+                api_provider=self.api_provider,
+                model=self.model,
+                prompt=self.get_prompt(),
+                images=[base64_image],
+                image_mime_types=[mime_type],
+            )
             response = requests.post(self.api_url, json=payload)
             if response.status_code != 200:
                 logger.error(f"APIエラー: status_code={response.status_code}, text={response.text}")
                 raise Exception(f"APIエラー: {response.status_code} - {response.text}")
 
             result = response.json()
-            response_text = result.get('response', 'No analysis available')
+            response_text = extract_ai_response_text(self.api_provider, result)
             if not self.clean_custom_response:
                 return response_text
             else:
@@ -757,11 +907,12 @@ class ChatWorker(QThread):
     """
     AIチャットAPIへの通信を非同期で実行するワーカー
     """
-    result_ready = Signal(dict)
+    result_ready = Signal(str)
     error_occurred = Signal(str)
 
-    def __init__(self, api_url, payload):
+    def __init__(self, api_provider, api_url, payload):
         super().__init__()
+        self.api_provider = normalize_api_provider(api_provider)
         self.api_url = api_url
         self.payload = payload
 
@@ -774,23 +925,24 @@ class ChatWorker(QThread):
             if response.status_code != 200:
                 raise Exception(f"HTTP {response.status_code} Error: {response.text}")
             result = response.json()
-            self.result_ready.emit(result)
+            self.result_ready.emit(extract_ai_response_text(self.api_provider, result))
         except Exception as e:
             self.error_occurred.emit(str(e))
 
 # ----------------- テキスト変換関連 -----------------
 class TextTransformService:
     """
-    既存txtをOllamaに渡して翻訳/タグ化/プロンプト化するサービス。
+    既存txtを選択されたAI接続先に渡して翻訳/タグ化/プロンプト化するサービス。
     """
-    def __init__(self, api_url, model, timeout=120):
+    def __init__(self, api_provider, api_url, model, timeout=120):
+        self.api_provider = normalize_api_provider(api_provider)
         self.api_url = api_url
         self.model = model
         self.timeout = timeout
 
     def build_prompt(self, preset, text, model):
         """
-        変換プリセットからOllamaへ渡すプロンプトを構築する。
+        変換プリセットからAI接続先へ渡すプロンプトを構築する。
         """
         if not text.strip():
             raise ValueError("変換元テキストが空です。")
@@ -798,33 +950,30 @@ class TextTransformService:
 
     def transform_text(self, text, preset):
         """
-        Ollama APIにテキスト変換を依頼し、整形済みの結果を返す。
+        AI APIにテキスト変換を依頼し、整形済みの結果を返す。
         """
-        payload = {
-            "model": self.model,
-            "prompt": self.build_prompt(preset, text, self.model),
-            "stream": False,
-            "options": {
-                "temperature": preset["temperature"],
-                "top_p": 0.9,
-            },
-        }
+        provider_name = api_provider_display_name(self.api_provider)
+        payload = build_ai_request_payload(
+            api_provider=self.api_provider,
+            model=self.model,
+            prompt=self.build_prompt(preset, text, self.model),
+            temperature=preset["temperature"],
+            top_p=0.9,
+        )
         try:
             response = requests.post(self.api_url, json=payload, timeout=self.timeout)
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Ollama API通信エラー: {e}") from e
+            raise RuntimeError(f"{provider_name} API通信エラー: {e}") from e
 
         if response.status_code != 200:
-            raise RuntimeError(f"Ollama APIエラー: HTTP {response.status_code} - {response.text}")
+            raise RuntimeError(f"{provider_name} APIエラー: HTTP {response.status_code} - {response.text}")
 
         try:
             result = response.json()
         except ValueError as e:
-            raise RuntimeError(f"Ollama APIレスポンスのJSON形式が不正です: {e}") from e
+            raise RuntimeError(f"{provider_name} APIレスポンスのJSON形式が不正です: {e}") from e
 
-        response_text = result.get("response")
-        if not isinstance(response_text, str) or not response_text.strip():
-            raise RuntimeError("Ollama APIレスポンスに response テキストがありません。")
+        response_text = extract_ai_response_text(self.api_provider, result)
 
         return self.clean_output(response_text, preset["mode"])
 
@@ -910,6 +1059,7 @@ class TextTransformService:
             "mode": preset["mode"],
             "source_file": base_caption_path.name,
             "output_file": output_path.name,
+            "api_provider": self.api_provider,
             "model": self.model,
             "api_url": self.api_url,
             "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -963,16 +1113,17 @@ class TextTransformPreviewWorker(QThread):
     result_ready = Signal(str)
     error_occurred = Signal(str)
 
-    def __init__(self, text, preset, api_url, model):
+    def __init__(self, text, preset, api_provider, api_url, model):
         super().__init__()
         self.text = text
         self.preset = preset
+        self.api_provider = normalize_api_provider(api_provider)
         self.api_url = api_url
         self.model = model
 
     def run(self):
         try:
-            service = TextTransformService(self.api_url, self.model)
+            service = TextTransformService(self.api_provider, self.api_url, self.model)
             self.result_ready.emit(service.transform_text(self.text, self.preset))
         except Exception as e:
             self.error_occurred.emit(str(e))
@@ -987,10 +1138,11 @@ class TextTransformWorker(QThread):
     item_failed = Signal(str, str)
     transform_complete = Signal(int, int)
 
-    def __init__(self, image_paths, preset, api_url, model, overwrite=False):
+    def __init__(self, image_paths, preset, api_provider, api_url, model, overwrite=False):
         super().__init__()
         self.image_paths = [Path(path) for path in image_paths]
         self.preset = preset
+        self.api_provider = normalize_api_provider(api_provider)
         self.api_url = api_url
         self.model = model
         self.overwrite = overwrite
@@ -1002,7 +1154,7 @@ class TextTransformWorker(QThread):
             self.transform_complete.emit(0, 0)
             return
 
-        service = TextTransformService(self.api_url, self.model)
+        service = TextTransformService(self.api_provider, self.api_url, self.model)
         success = 0
         failed = 0
         for index, image_path in enumerate(self.image_paths, start=1):
@@ -1425,8 +1577,9 @@ class ChatTab(QWidget):
     """
     AIチャット用タブ
     """
-    def __init__(self, parent=None, get_api_url_func=None, get_model_func=None):
+    def __init__(self, parent=None, get_api_provider_func=None, get_api_url_func=None, get_model_func=None):
         super().__init__(parent)
+        self.get_api_provider_func = get_api_provider_func
         self.get_api_url_func = get_api_url_func
         self.get_model_func = get_model_func
         self.waiting_message_displayed = False
@@ -1469,32 +1622,36 @@ class ChatTab(QWidget):
         self.append_chat("ユーザー", message)
         self.input_edit.clear()
 
-        api_url = self.get_api_url_func() if self.get_api_url_func else "http://localhost:11434/api/generate"
+        api_provider = self.get_api_provider_func() if self.get_api_provider_func else API_PROVIDER_OLLAMA
+        api_provider = normalize_api_provider(api_provider)
+        api_url = self.get_api_url_func() if self.get_api_url_func else provider_default_api_url(api_provider)
         model_name = self.get_model_func() if self.get_model_func else "chat"
 
-        payload = {
-            "model": model_name,
-            "prompt": message,
-            "stream": False,
-            "images": []
-        }
+        try:
+            payload = build_ai_request_payload(
+                api_provider=api_provider,
+                model=model_name,
+                prompt=message,
+            )
+        except Exception as e:
+            self.append_chat("エラー", str(e))
+            return
 
         self.send_button.setEnabled(False)
         self.append_chat("システム", "応答を待っています...")
         self.waiting_message_displayed = True
 
-        self.chat_worker = ChatWorker(api_url, payload)
+        self.chat_worker = ChatWorker(api_provider, api_url, payload)
         self.chat_worker.result_ready.connect(self.handle_chat_result)
         self.chat_worker.error_occurred.connect(self.handle_chat_error)
         self.chat_worker.finished.connect(lambda: self.send_button.setEnabled(True))
         self.chat_worker.start()
 
-    def handle_chat_result(self, result):
+    def handle_chat_result(self, reply):
         """
         AIからの応答を受け取り、チャット欄に表示
         """
         self.remove_waiting_message()
-        reply = result.get("response", "No reply")
         self.append_chat("AI", reply)
 
     def handle_chat_error(self, error):
@@ -1535,9 +1692,11 @@ class ImageTaggingTab(QWidget):
         self.prompt_presets = load_prompt_presets()
         default_model = self.model_presets[0]["model"]
         # 設定を辞書にまとめて保持
+        api_provider = normalize_api_provider(loaded_config.get("api_provider") or DEFAULT_API_PROVIDER)
         self.settings = {
             "model": loaded_config.get("model", default_model),
-            "api_url": loaded_config.get("api_url", "http://localhost:11434/api/generate"),
+            "api_provider": api_provider,
+            "api_url": loaded_config.get("api_url", provider_default_api_url(api_provider)),
             "use_japanese": loaded_config.get("use_japanese", False),
             "custom_prompt": loaded_config.get("custom_prompt", ""),
             "clean_response": loaded_config.get("clean_response", True),
@@ -1563,7 +1722,19 @@ class ImageTaggingTab(QWidget):
         toolbar.setIconSize(QSize(16, 16))
         toolbar.setMovable(False)
 
-        model_label = QLabel("Ollamaモデル:")
+        provider_label = QLabel("接続先:")
+        toolbar.addWidget(provider_label)
+
+        self.provider_combo = QComboBox()
+        for provider_value, provider_label_text in API_PROVIDER_CHOICES:
+            self.provider_combo.addItem(provider_label_text, provider_value)
+        provider_index = self.provider_combo.findData(self.settings["api_provider"])
+        self.provider_combo.setCurrentIndex(provider_index)
+        self.provider_combo.currentIndexChanged.connect(self.on_api_provider_changed)
+        toolbar.addWidget(self.provider_combo)
+        toolbar.addSeparator()
+
+        model_label = QLabel("AIモデル:")
         toolbar.addWidget(model_label)
 
         self.model_combo = QComboBox()
@@ -1580,7 +1751,7 @@ class ImageTaggingTab(QWidget):
         toolbar.addWidget(self.model_combo)
         toolbar.addSeparator()
 
-        url_label = QLabel("Ollama URL:")
+        url_label = QLabel("API URL:")
         toolbar.addWidget(url_label)
 
         self.url_edit = QLineEdit(self.settings["api_url"])
@@ -1706,6 +1877,16 @@ class ImageTaggingTab(QWidget):
         main_layout.addLayout(bottom_layout)
 
         self.setLayout(main_layout)
+
+    def get_api_provider(self):
+        return normalize_api_provider(self.provider_combo.currentData())
+
+    def on_api_provider_changed(self, index):
+        api_provider = self.get_api_provider()
+        current_url = self.url_edit.text().strip()
+        if not current_url or current_url in DEFAULT_API_URLS.values():
+            self.url_edit.setText(provider_default_api_url(api_provider))
+        self.settings["api_provider"] = api_provider
 
     def show_settings(self):
         """
@@ -1861,15 +2042,20 @@ class ImageTaggingTab(QWidget):
         else:
             image_paths = [str(self.image_list.item(i).image_path) for i in range(self.image_list.count())]
 
-        # メインウィンドウでAIサーバ未起動の場合は起動（機能はあるが停止は削除済み）
-        main_window = self.window()
-        if hasattr(main_window, "ai_process") and main_window.ai_process is None:
-            main_window.start_ai_server()
-
         # 設定を更新
         self.settings["model"] = self.model_combo.currentText()
+        self.settings["api_provider"] = self.get_api_provider()
         self.settings["api_url"] = self.url_edit.text()
         self.settings["use_japanese"] = self.japanese_check.isChecked()
+
+        # Ollama利用時のみアプリ側からローカルサーバ起動を試みる。
+        main_window = self.window()
+        if (
+            self.settings["api_provider"] == API_PROVIDER_OLLAMA
+            and hasattr(main_window, "ai_process")
+            and main_window.ai_process is None
+        ):
+            main_window.start_ai_server()
 
         # アナライザ生成
         self.analyzer = ImageAnalyzer(
@@ -1878,6 +2064,7 @@ class ImageTaggingTab(QWidget):
             detail_level=self.settings["detail_level"],
             custom_prompt=self.settings["custom_prompt"] if self.settings["custom_prompt"] else None,
             clean_custom_response=self.settings["clean_response"],
+            api_provider=self.settings["api_provider"],
             api_url=self.settings["api_url"],
             clean_patterns=self.settings["clean_patterns"]
         )
@@ -2481,7 +2668,8 @@ class TextTransformTab(QWidget):
             self.preset_load_error = str(e)
 
         loaded_config = load_app_config()
-        self.initial_api_url = loaded_config.get("api_url", DEFAULT_OLLAMA_API_URL)
+        self.initial_api_provider = normalize_api_provider(loaded_config.get("api_provider") or DEFAULT_API_PROVIDER)
+        self.initial_api_url = loaded_config.get("api_url", provider_default_api_url(self.initial_api_provider))
         self.preview_worker = None
         self.transform_worker = None
         self.init_ui()
@@ -2516,7 +2704,16 @@ class TextTransformTab(QWidget):
         self.mode_combo.currentIndexChanged.connect(self.on_mode_changed)
         settings_layout.addWidget(self.mode_combo, 0, 1)
 
-        settings_layout.addWidget(QLabel("使用モデル:"), 0, 2)
+        settings_layout.addWidget(QLabel("接続先:"), 0, 2)
+        self.provider_combo = QComboBox()
+        for provider_value, provider_label_text in API_PROVIDER_CHOICES:
+            self.provider_combo.addItem(provider_label_text, provider_value)
+        provider_index = self.provider_combo.findData(self.initial_api_provider)
+        self.provider_combo.setCurrentIndex(provider_index)
+        self.provider_combo.currentIndexChanged.connect(self.on_api_provider_changed)
+        settings_layout.addWidget(self.provider_combo, 0, 3)
+
+        settings_layout.addWidget(QLabel("使用モデル:"), 1, 0)
         self.model_combo = QComboBox()
         for preset in self.model_presets:
             self.model_combo.addItem(preset["model"])
@@ -2526,19 +2723,19 @@ class TextTransformTab(QWidget):
                 tooltip = f"{tooltip}\n{preset['description']}"
             self.model_combo.setItemData(index, tooltip, Qt.ToolTipRole)
         self.model_combo.setEditable(True)
-        settings_layout.addWidget(self.model_combo, 0, 3)
+        settings_layout.addWidget(self.model_combo, 1, 1)
 
-        settings_layout.addWidget(QLabel("API URL:"), 1, 0)
+        settings_layout.addWidget(QLabel("API URL:"), 1, 2)
         self.api_url_edit = QLineEdit(self.initial_api_url)
-        settings_layout.addWidget(self.api_url_edit, 1, 1)
+        settings_layout.addWidget(self.api_url_edit, 1, 3)
 
-        settings_layout.addWidget(QLabel("保存先サフィックス:"), 1, 2)
+        settings_layout.addWidget(QLabel("保存先サフィックス:"), 2, 0)
         self.suffix_label = QLabel("-")
-        settings_layout.addWidget(self.suffix_label, 1, 3)
+        settings_layout.addWidget(self.suffix_label, 2, 1)
 
         self.overwrite_check = QCheckBox("既存サイドカーの上書きを許可")
         self.overwrite_check.setChecked(False)
-        settings_layout.addWidget(self.overwrite_check, 2, 1)
+        settings_layout.addWidget(self.overwrite_check, 2, 3)
 
         main_layout.addWidget(settings_group)
 
@@ -2621,6 +2818,15 @@ class TextTransformTab(QWidget):
             self.on_mode_changed(self.mode_combo.currentIndex())
 
         self._update_action_buttons()
+
+    def get_api_provider(self):
+        return normalize_api_provider(self.provider_combo.currentData())
+
+    def on_api_provider_changed(self, index):
+        api_provider = self.get_api_provider()
+        current_url = self.api_url_edit.text().strip()
+        if not current_url or current_url in DEFAULT_API_URLS.values():
+            self.api_url_edit.setText(provider_default_api_url(api_provider))
 
     def browse_source(self):
         folder = QFileDialog.getExistingDirectory(self, "ソースフォルダを選択")
@@ -2710,6 +2916,7 @@ class TextTransformTab(QWidget):
         if not preset:
             return
         model = self.model_combo.currentText().strip()
+        api_provider = self.get_api_provider()
         api_url = self.api_url_edit.text().strip()
         if not model or not api_url:
             QMessageBox.warning(self, "警告", "モデル名とAPI URLを入力してください。")
@@ -2722,7 +2929,7 @@ class TextTransformTab(QWidget):
         self.preview_button.setEnabled(False)
         self.batch_button.setEnabled(False)
         self.status_label.setText("プレビュー変換中...")
-        self.preview_worker = TextTransformPreviewWorker(text, preset, api_url, model)
+        self.preview_worker = TextTransformPreviewWorker(text, preset, api_provider, api_url, model)
         self.preview_worker.result_ready.connect(self.on_preview_ready)
         self.preview_worker.error_occurred.connect(self.on_preview_error)
         self.preview_worker.finished.connect(self.on_preview_finished)
@@ -2749,6 +2956,7 @@ class TextTransformTab(QWidget):
         if not preset:
             return
         model = self.model_combo.currentText().strip()
+        api_provider = self.get_api_provider()
         api_url = self.api_url_edit.text().strip()
         if not model or not api_url:
             QMessageBox.warning(self, "警告", "モデル名とAPI URLを入力してください。")
@@ -2764,6 +2972,7 @@ class TextTransformTab(QWidget):
         self.transform_worker = TextTransformWorker(
             image_paths=image_paths,
             preset=preset,
+            api_provider=api_provider,
             api_url=api_url,
             model=model,
             overwrite=self.overwrite_check.isChecked(),
@@ -2835,10 +3044,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("画像タグ付け・ファイル移動ツール")
         self.setMinimumSize(1000, 700)
 
+        loaded_config = load_app_config()
+
         # ollamaプロセスを保持する変数（Noneの場合、未起動）
         self.ai_process = None
 
-        self.set_light_theme()
+        self.theme = normalize_theme(loaded_config.get("theme") or DEFAULT_THEME)
+        self.theme_action_group = None
+        self.apply_theme(self.theme, save=False)
 
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -2850,6 +3063,7 @@ class MainWindow(QMainWindow):
         self.move_tab = FileMoveTab()
         self.result_edit_tab = ResultEditTab()
         self.chat_tab = ChatTab(
+            get_api_provider_func=lambda: self.tagging_tab.get_api_provider(),
             get_api_url_func=lambda: self.tagging_tab.url_edit.text(),
             get_model_func=lambda: self.tagging_tab.model_combo.currentText()
         )
@@ -2873,16 +3087,30 @@ class MainWindow(QMainWindow):
         deletion_action = QAction("削除パターン設定", self)
         deletion_action.triggered.connect(self.open_deletion_pattern_dialog)
         settings_menu.addAction(deletion_action)
+        theme_menu = settings_menu.addMenu("テーマ")
+        self.theme_action_group = QActionGroup(self)
+        self.theme_action_group.setExclusive(True)
+        light_theme_action = QAction("ライトモード", self)
+        light_theme_action.setCheckable(True)
+        light_theme_action.setData("light")
+        dark_theme_action = QAction("ダークモード", self)
+        dark_theme_action.setCheckable(True)
+        dark_theme_action.setData("dark")
+        self.theme_action_group.addAction(light_theme_action)
+        self.theme_action_group.addAction(dark_theme_action)
+        theme_menu.addAction(light_theme_action)
+        theme_menu.addAction(dark_theme_action)
+        self.theme_action_group.triggered.connect(self.on_theme_action_triggered)
+        self.update_theme_actions()
 
         # 「AIサーバ」メニュー
         ai_menu = menubar.addMenu("AIサーバ")
-        stop_ai_action = QAction("AIサーバ停止", self)
+        stop_ai_action = QAction("Ollamaサーバ停止", self)
         stop_ai_action.triggered.connect(self.stop_ai_server)
         ai_menu.addAction(stop_ai_action)
-        ai_start_action = QAction("AIサーバ起動", self)
+        ai_start_action = QAction("Ollamaサーバ起動", self)
         ai_start_action.triggered.connect(self.start_ai_server)
         ai_menu.addAction(ai_start_action)
-        # 停止機能は削除済み
 
     def open_deletion_pattern_dialog(self):
         """
@@ -2907,7 +3135,7 @@ class MainWindow(QMainWindow):
             self.ai_process.terminate()
             self.ai_process.wait(timeout=10)
         self.ai_process = None
-        self.statusBar.showMessage("AIサーバを停止しました", 5000)
+        self.statusBar.showMessage("Ollamaサーバを停止しました", 5000)
     
     def start_ai_server(self):
         """
@@ -2933,14 +3161,43 @@ class MainWindow(QMainWindow):
                 # macOS/Linuxではバックグラウンドで起動
                 self.ai_process = subprocess.Popen(["ollama", "serve"])
 
-            self.statusBar.showMessage(f"AIサーバ起動中: {model}")
+            self.statusBar.showMessage(f"Ollamaサーバ起動中: {model}")
         except Exception as e:
-            QMessageBox.critical(self, "エラー", f"AIサーバ起動エラー: {str(e)}")
+            QMessageBox.critical(self, "エラー", f"Ollamaサーバ起動エラー: {str(e)}")
             self.ai_process = None
+
+    def on_theme_action_triggered(self, action):
+        self.apply_theme(action.data(), save=True)
+
+    def update_theme_actions(self):
+        if not self.theme_action_group:
+            return
+        for action in self.theme_action_group.actions():
+            action.setChecked(action.data() == self.theme)
+
+    def apply_theme(self, theme, save=False):
+        theme = normalize_theme(theme)
+        self.theme = theme
+        if theme == "dark":
+            self.set_dark_theme()
+        else:
+            self.set_light_theme()
+        self.update_theme_actions()
+
+        if save:
+            cfg = load_app_config()
+            cfg["theme"] = theme
+            save_app_config(cfg)
+            if isinstance(getattr(self, "statusBar", None), QStatusBar):
+                self.statusBar.showMessage(f"テーマを{self.theme_label(theme)}に変更しました", 5000)
+
+    def theme_label(self, theme):
+        theme = normalize_theme(theme)
+        return "ダークモード" if theme == "dark" else "ライトモード"
 
     def set_light_theme(self):
         """
-        シンプルなライトテーマを適用（任意）
+        シンプルなライトテーマを適用
         """
         palette = QPalette()
         palette.setColor(QPalette.Window, QColor(240, 240, 240))
@@ -2955,6 +3212,142 @@ class MainWindow(QMainWindow):
         palette.setColor(QPalette.Highlight, QColor(76, 163, 220))
         palette.setColor(QPalette.HighlightedText, Qt.white)
         self.setPalette(palette)
+        app = QApplication.instance()
+        if app:
+            app.setPalette(palette)
+            app.setStyleSheet("""
+                QTextEdit#tagDisplay {
+                    background-color: #ffffff;
+                    color: #111111;
+                    border: 1px solid #c8c8c8;
+                    border-radius: 5px;
+                }
+            """)
+
+    def set_dark_theme(self):
+        """
+        アプリ全体にダークテーマを適用する。
+        """
+        palette = QPalette()
+        palette.setColor(QPalette.Window, QColor(32, 34, 37))
+        palette.setColor(QPalette.WindowText, QColor(232, 234, 237))
+        palette.setColor(QPalette.Base, QColor(21, 23, 26))
+        palette.setColor(QPalette.AlternateBase, QColor(43, 46, 51))
+        palette.setColor(QPalette.ToolTipBase, QColor(45, 48, 54))
+        palette.setColor(QPalette.ToolTipText, QColor(232, 234, 237))
+        palette.setColor(QPalette.Text, QColor(232, 234, 237))
+        palette.setColor(QPalette.Button, QColor(47, 52, 58))
+        palette.setColor(QPalette.ButtonText, QColor(232, 234, 237))
+        palette.setColor(QPalette.Highlight, QColor(55, 115, 220))
+        palette.setColor(QPalette.HighlightedText, Qt.white)
+        palette.setColor(QPalette.PlaceholderText, QColor(140, 145, 153))
+        self.setPalette(palette)
+
+        app = QApplication.instance()
+        if app:
+            app.setPalette(palette)
+            app.setStyleSheet("""
+                QWidget {
+                    background-color: #202225;
+                    color: #e8eaed;
+                }
+                QMainWindow, QDialog {
+                    background-color: #202225;
+                }
+                QLineEdit, QTextEdit, QListWidget, QComboBox {
+                    background-color: #15171a;
+                    color: #e8eaed;
+                    border: 1px solid #3c4043;
+                    border-radius: 4px;
+                    selection-background-color: #3773dc;
+                    selection-color: #ffffff;
+                }
+                QLineEdit, QComboBox {
+                    min-height: 24px;
+                    padding: 2px 6px;
+                }
+                QTextEdit#tagDisplay {
+                    background-color: #15171a;
+                    color: #e8eaed;
+                    border: 1px solid #3c4043;
+                    border-radius: 5px;
+                }
+                QListWidget::item:selected {
+                    background-color: #294f8f;
+                    color: #ffffff;
+                }
+                QGroupBox {
+                    border: 1px solid #3c4043;
+                    border-radius: 4px;
+                    margin-top: 10px;
+                    padding-top: 12px;
+                }
+                QGroupBox::title {
+                    subcontrol-origin: margin;
+                    left: 8px;
+                    padding: 0 4px;
+                    background-color: #202225;
+                }
+                QToolBar {
+                    background-color: #202225;
+                    border-bottom: 1px solid #3c4043;
+                    spacing: 6px;
+                }
+                QMenuBar, QMenu {
+                    background-color: #202225;
+                    color: #e8eaed;
+                }
+                QMenuBar::item:selected, QMenu::item:selected {
+                    background-color: #294f8f;
+                }
+                QStatusBar {
+                    background-color: #202225;
+                    color: #e8eaed;
+                    border-top: 1px solid #3c4043;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #3c4043;
+                }
+                QTabBar::tab {
+                    background-color: #2b2e33;
+                    color: #e8eaed;
+                    border: 1px solid #3c4043;
+                    padding: 6px 12px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #15171a;
+                    border-bottom: 2px solid #66a3ff;
+                }
+                QPushButton {
+                    background-color: #2f343a;
+                    color: #e8eaed;
+                    border: 1px solid #4b525b;
+                    border-radius: 4px;
+                    padding: 4px 10px;
+                }
+                QPushButton:hover {
+                    background-color: #3a4149;
+                }
+                QPushButton:disabled {
+                    background-color: #2a2d31;
+                    color: #7d838c;
+                    border-color: #3c4043;
+                }
+                QProgressBar {
+                    background-color: #15171a;
+                    color: #e8eaed;
+                    border: 1px solid #3c4043;
+                    border-radius: 4px;
+                    text-align: center;
+                }
+                QProgressBar::chunk {
+                    background-color: #3773dc;
+                    border-radius: 3px;
+                }
+                QSplitter::handle {
+                    background-color: #3c4043;
+                }
+            """)
 
     def closeEvent(self, event):
         self.stop_ai_server()
