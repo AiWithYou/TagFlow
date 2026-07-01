@@ -1,4 +1,41 @@
-# Python virtual environment
-main_new.py_bak
+# Python virtual environments
 venv/
-README.md
+.venv/
+env/
+ENV/
+
+# Python cache and tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local runtime configuration and logs
+# Keep the committed app_config.json as the default sample; ignore local variants.
+app_config.local.json
+*.log
+
+# Generated TagFlow sidecars
+*.tagflow.json
+*.tagflow.bak.json
+*.tagflow.bak.*.json
+*.en.txt
+*.ja.txt
+*.danbooru.txt
+*.prompt.txt
+*.prompt_ja.txt
+*.lora.txt
+
+# Build/distribution output
+build/
+dist/
+*.spec
+
+# Editor/OS files
+.DS_Store
+Thumbs.db
+
+# Local backups
+*_bak
+*.bak
