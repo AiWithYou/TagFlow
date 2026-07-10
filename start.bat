@@ -12,7 +12,7 @@ if not exist "%VENV_PYTHON%" (
 
 "%VENV_PYTHON%" -m pip install --upgrade pip || goto :error
 "%VENV_PYTHON%" -m pip install -r requirements.txt || goto :error
-"%VENV_PYTHON%" TagFlow.py
+"%VENV_PYTHON%" tagflow_entry.py
 set "EXIT_CODE=%ERRORLEVEL%"
 pause
 exit /b %EXIT_CODE%
