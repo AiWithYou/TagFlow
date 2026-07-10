@@ -36,7 +36,7 @@ try {
     & $venvPython -m pip install -r requirements.txt
     if ($LASTEXITCODE -ne 0) { throw "依存パッケージのインストールに失敗しました。" }
 
-    & $venvPython TagFlow.py
+    & $venvPython tagflow_entry.py
     $exitCode = $LASTEXITCODE
     Pause
     exit $exitCode
