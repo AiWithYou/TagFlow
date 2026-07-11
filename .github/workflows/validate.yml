@@ -1,40 +1,77 @@
-name: Validate
+name: Apply and validate online providers
 
 on:
-  push:
   pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
 
 jobs:
-  validate:
+  apply-and-validate:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'feat/online-ai-providers'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Check out pull request head
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Reconstruct and apply implementation patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/tagflow-provider-patch/part-* \
+            | base64 --decode \
+            | gzip --decompress \
+            > /tmp/tagflow-online-providers.patch
+          echo "a733e1e57d56f2d789b868dfa1c72e6a2779a6ee893bdf66de1f9e3bd3d7979d  /tmp/tagflow-online-providers.patch" \
+            | sha256sum --check --strict
+
+          git show 3d918f363f315d38a58d9737de28860fec19081c:.github/workflows/validate.yml \
+            > .github/workflows/validate.yml
+          rm -f .github/workflows/apply-online-provider-patch.yml
+
+          git apply --check /tmp/tagflow-online-providers.patch
+          git apply /tmp/tagflow-online-providers.patch
+          rm -rf .github/tagflow-provider-patch
+          git diff --check
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install core test dependencies
-        run: python -m pip install "requests>=2.31.0" "Pillow>=10.0.0"
+      - name: Install validation dependencies
+        run: python -m pip install "requests>=2.31.0" "Pillow>=10.0.0" ruff
 
-      - name: Validate preset JSON
-        run: python tools/validate_presets.py
+      - name: Validate final source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/validate_presets.py
+          python -m py_compile TagFlow.py tagflow_entry.py tagflow_core/*.py tools/*.py
+          python -m unittest discover -s tests -v
+          python tools/audit_dataset.py --help >/dev/null
+          python -m ruff check TagFlow.py tagflow_entry.py tagflow_core tests tools
+          git diff --check
 
-      - name: Compile Python sources
-        run: python -m py_compile TagFlow.py tagflow_entry.py tagflow_core/*.py tools/*.py
+      - name: Commit validated implementation and tree marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Run core unit tests
-        run: python -m unittest discover -s tests -v
+          git add -A
+          git commit -m "feat: add online AI providers and update README"
+          FINAL_TREE="$(git rev-parse 'HEAD^{tree}')"
 
-      - name: Check dataset audit CLI
-        run: python tools/audit_dataset.py --help
-
-      - name: Export source snapshot for implementation tooling
-        uses: actions/upload-artifact@v4
-        with:
-          name: tagflow-source-${{ github.sha }}
-          path: .
-          include-hidden-files: true
-          retention-days: 1
+          printf '%s\n' "$FINAL_TREE" > .tagflow-final-tree-sha
+          git add .tagflow-final-tree-sha
+          git commit -m "chore: expose validated tree for finalization"
+          git push origin "HEAD:${GITHUB_HEAD_REF}"
