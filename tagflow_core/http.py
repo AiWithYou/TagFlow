@@ -1,4 +1,4 @@
-"""HTTP reliability helpers for local Ollama and OpenAI-compatible servers."""
+"""HTTP reliability helpers for local and cloud AI endpoints."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ class ApiRequestError(RuntimeError):
 
 @dataclass(frozen=True)
 class HttpPolicy:
-    """Timeout and retry policy for a local inference request."""
+    """Timeout and retry policy for an AI inference request."""
 
     connect_timeout: float = 10.0
     read_timeout: float = 300.0
@@ -74,13 +74,14 @@ def post_json(
     session: _Session | None = None,
     sleep: Callable[[float], None] = time.sleep,
     should_stop: Callable[[], bool] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """POST JSON with bounded connection retries and normalized diagnostics.
 
-    Read timeouts are deliberately not retried: a local model may already have
+    Read timeouts are deliberately not retried: a provider may already have
     completed an expensive generation, and blindly repeating it can double the
-    workload.  Connection failures and explicitly transient HTTP statuses are
-    retried with exponential backoff.
+    workload or cost. Connection failures and explicitly transient HTTP
+    statuses are retried with exponential backoff.
     """
 
     if not isinstance(url, str) or not url.strip():
@@ -98,11 +99,14 @@ def post_json(
 
         response: _Response | None = None
         try:
-            response = client.post(
-                url.strip(),
-                json=dict(payload),
-                timeout=(request_policy.connect_timeout, request_policy.read_timeout),
-            )
+            request_kwargs: dict[str, Any] = {
+                "json": dict(payload),
+                "timeout": (request_policy.connect_timeout, request_policy.read_timeout),
+                "allow_redirects": False,
+            }
+            if headers:
+                request_kwargs["headers"] = dict(headers)
+            response = client.post(url.strip(), **request_kwargs)
         except requests.exceptions.ReadTimeout as exc:
             raise ApiRequestError(
                 f"AI APIの応答待ちが{request_policy.read_timeout:g}秒でタイムアウトしました。"

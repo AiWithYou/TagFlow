@@ -1,5 +1,10 @@
 [
   {
+    "label": "GPT-5.6 / OpenAI API（Vision）",
+    "model": "gpt-5.6",
+    "description": "OpenAI Responses API向け。画像説明、タグ化、翻訳に対応するオンライン標準候補。API利用料はChatGPTサブスクと別課金です。"
+  },
+  {
     "label": "Gemma 4 12B Vision / 画像説明・変換 標準",
     "model": "gemma4:12b",
     "description": "画像説明、タグ化、自然文プロンプト化に使う標準候補。"

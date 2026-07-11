@@ -56,6 +56,21 @@ class PostJsonTests(unittest.TestCase):
         self.assertEqual(result, {"response": "ok"})
         self.assertEqual(sleeps, [0.25])
         self.assertEqual(session.calls[0][1]["timeout"], (10.0, 300.0))
+        self.assertIs(session.calls[0][1]["allow_redirects"], False)
+
+    def test_passes_explicit_headers_without_mutating_them(self) -> None:
+        session = FakeSession([FakeResponse(200, {"response": "ok"})])
+        headers = {"Authorization": "Bearer secret", "X-Test": "1"}
+
+        post_json(
+            "https://example.test/v1/responses",
+            {"model": "x"},
+            session=session,
+            headers=headers,
+        )
+
+        self.assertEqual(session.calls[0][1]["headers"], headers)
+        self.assertEqual(headers, {"Authorization": "Bearer secret", "X-Test": "1"})
 
     def test_honors_retry_after_for_transient_status(self) -> None:
         session = FakeSession(

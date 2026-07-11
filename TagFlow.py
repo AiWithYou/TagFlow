@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 import os
 import base64
-import requests
 import subprocess
 import re
 import io
@@ -15,12 +14,11 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageQt
-from threading import Thread
+from tagflow_core import providers as ai_providers
 
 # PySide6インポート
 from PySide6.QtGui import (
-    QAction, QActionGroup, QPixmap, QIcon, QImage, QColor, QPalette,
-    QFont, QTextCursor
+    QAction, QActionGroup, QPixmap, QIcon, QColor, QPalette, QTextCursor
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
@@ -49,20 +47,19 @@ APP_DIR = Path(__file__).resolve().parent
 MODEL_PRESETS_FILE = APP_DIR / "presets" / "model_presets.json"
 PROMPT_PRESETS_FILE = APP_DIR / "presets" / "prompt_presets.json"
 TRANSFORM_PRESETS_FILE = APP_DIR / "presets" / "transform_presets.json"
-DEFAULT_OLLAMA_API_URL = "http://localhost:11434/api/generate"
-DEFAULT_LM_STUDIO_API_URL = "http://localhost:1234/v1/chat/completions"
-API_PROVIDER_OLLAMA = "ollama"
-API_PROVIDER_LM_STUDIO = "lm_studio"
-DEFAULT_API_PROVIDER = API_PROVIDER_OLLAMA
-API_PROVIDER_CHOICES = (
-    (API_PROVIDER_OLLAMA, "Ollama"),
-    (API_PROVIDER_LM_STUDIO, "LM Studio"),
-)
-API_PROVIDER_LABELS = dict(API_PROVIDER_CHOICES)
-DEFAULT_API_URLS = {
-    API_PROVIDER_OLLAMA: DEFAULT_OLLAMA_API_URL,
-    API_PROVIDER_LM_STUDIO: DEFAULT_LM_STUDIO_API_URL,
-}
+DEFAULT_OLLAMA_API_URL = ai_providers.DEFAULT_OLLAMA_API_URL
+DEFAULT_LM_STUDIO_API_URL = ai_providers.DEFAULT_LM_STUDIO_API_URL
+DEFAULT_OPENAI_API_URL = ai_providers.DEFAULT_OPENAI_API_URL
+DEFAULT_CODEX_COMMAND = ai_providers.DEFAULT_CODEX_COMMAND
+API_PROVIDER_OLLAMA = ai_providers.API_PROVIDER_OLLAMA
+API_PROVIDER_LM_STUDIO = ai_providers.API_PROVIDER_LM_STUDIO
+API_PROVIDER_OPENAI = ai_providers.API_PROVIDER_OPENAI
+API_PROVIDER_CODEX_CLI = ai_providers.API_PROVIDER_CODEX_CLI
+DEFAULT_API_PROVIDER = ai_providers.DEFAULT_API_PROVIDER
+API_PROVIDER_CHOICES = ai_providers.API_PROVIDER_CHOICES
+API_PROVIDER_LABELS = ai_providers.API_PROVIDER_LABELS
+DEFAULT_API_URLS = ai_providers.DEFAULT_API_URLS
+DEFAULT_PROVIDER_MODELS = ai_providers.DEFAULT_PROVIDER_MODELS
 DEFAULT_THEME = "light"
 VALID_THEMES = {"light", "dark"}
 SUPPORTED_IMAGE_SUFFIXES = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.heic', '.avif'}
@@ -272,17 +269,40 @@ def strip_model_channel_markers(text):
     return text.strip()
 
 def normalize_api_provider(api_provider):
-    if not isinstance(api_provider, str) or api_provider not in API_PROVIDER_LABELS:
-        valid = ", ".join(API_PROVIDER_LABELS.keys())
-        raise ValueError(f"未対応のAI接続先です: {api_provider!r}。有効値: {valid}")
-    return api_provider
+    return ai_providers.normalize_api_provider(api_provider)
 
 def api_provider_display_name(api_provider):
-    return API_PROVIDER_LABELS[normalize_api_provider(api_provider)]
+    return ai_providers.api_provider_display_name(api_provider)
 
 def provider_default_api_url(api_provider):
-    api_provider = normalize_api_provider(api_provider)
-    return DEFAULT_API_URLS[api_provider]
+    return ai_providers.provider_default_api_url(api_provider)
+
+def provider_default_model(api_provider):
+    return ai_providers.provider_default_model(api_provider)
+
+def provider_uses_local_image_paths(api_provider):
+    return ai_providers.provider_uses_local_image_paths(api_provider)
+
+def provider_requires_model(api_provider):
+    return ai_providers.provider_requires_model(api_provider)
+
+def provider_location_label(api_provider):
+    return ai_providers.provider_location_label(api_provider)
+
+def provider_location_placeholder(api_provider):
+    return ai_providers.provider_location_placeholder(api_provider)
+
+def provider_location_tooltip(api_provider):
+    return ai_providers.provider_location_tooltip(api_provider)
+
+def provider_notice(api_provider):
+    return ai_providers.provider_notice(api_provider)
+
+def validate_provider_location(api_provider, location):
+    return ai_providers.validate_provider_location(api_provider, location)
+
+def execute_ai_request(api_provider, location, payload, **kwargs):
+    return ai_providers.execute_ai_request(api_provider, location, payload, **kwargs)
 
 def normalize_theme(theme):
     if not isinstance(theme, str) or theme not in VALID_THEMES:
@@ -296,99 +316,25 @@ def build_ai_request_payload(
     prompt,
     images=None,
     image_mime_types=None,
+    image_paths=None,
     temperature=None,
     top_p=None,
 ):
-    """
-    選択されたAI接続先に合わせてリクエストpayloadを構築する。
-    """
-    api_provider = normalize_api_provider(api_provider)
-    model = model.strip() if isinstance(model, str) else ""
-    prompt = prompt.strip() if isinstance(prompt, str) else ""
-    if not model:
-        raise ValueError("モデル名が空です。")
-    if not prompt:
-        raise ValueError("プロンプトが空です。")
-
-    images = images or []
-    if api_provider == API_PROVIDER_OLLAMA:
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-        }
-        if images:
-            payload["images"] = images
-        options = {}
-        if temperature is not None:
-            options["temperature"] = temperature
-        if top_p is not None:
-            options["top_p"] = top_p
-        if options:
-            payload["options"] = options
-        return payload
-
-    if api_provider == API_PROVIDER_LM_STUDIO:
-        if images:
-            if not image_mime_types or len(image_mime_types) != len(images):
-                raise ValueError("LM Studioの画像入力には画像ごとのMIMEタイプが必要です。")
-            content = [{"type": "text", "text": prompt}]
-            for base64_image, mime_type in zip(images, image_mime_types):
-                content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{base64_image}"
-                    }
-                })
-        else:
-            content = prompt
-
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "user", "content": content}
-            ],
-            "stream": False,
-        }
-        if temperature is not None:
-            payload["temperature"] = temperature
-        if top_p is not None:
-            payload["top_p"] = top_p
-        return payload
-
-    raise ValueError(f"未対応のAI接続先です: {api_provider!r}")
+    """選択されたAI接続先に合わせてリクエストを構築する。"""
+    return ai_providers.build_ai_request_payload(
+        api_provider=api_provider,
+        model=model,
+        prompt=prompt,
+        images=images,
+        image_mime_types=image_mime_types,
+        image_paths=image_paths,
+        temperature=temperature,
+        top_p=top_p,
+    )
 
 def extract_ai_response_text(api_provider, result):
-    """
-    選択されたAI接続先のレスポンスから本文だけを取り出す。
-    """
-    api_provider = normalize_api_provider(api_provider)
-    provider_name = api_provider_display_name(api_provider)
-    if not isinstance(result, dict):
-        raise RuntimeError(f"{provider_name} APIレスポンスのルートがJSONオブジェクトではありません。")
-
-    if api_provider == API_PROVIDER_OLLAMA:
-        response_text = result.get("response")
-        if isinstance(response_text, str) and response_text.strip():
-            return response_text
-        raise RuntimeError("Ollama APIレスポンスに response テキストがありません。")
-
-    if api_provider == API_PROVIDER_LM_STUDIO:
-        choices = result.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise RuntimeError("LM Studio APIレスポンスに choices がありません。")
-        first_choice = choices[0]
-        if not isinstance(first_choice, dict):
-            raise RuntimeError("LM Studio APIレスポンスの choices[0] がオブジェクトではありません。")
-        message = first_choice.get("message")
-        if not isinstance(message, dict):
-            raise RuntimeError("LM Studio APIレスポンスに message がありません。")
-        content = message.get("content")
-        if isinstance(content, str) and content.strip():
-            return content
-        raise RuntimeError("LM Studio APIレスポンスに message.content テキストがありません。")
-
-    raise ValueError(f"未対応のAI接続先です: {api_provider!r}")
+    """選択されたAI接続先のレスポンスから本文だけを取り出す。"""
+    return ai_providers.extract_ai_response_text(api_provider, result)
 
 def apply_clean_patterns(text, patterns):
     """
@@ -658,31 +604,28 @@ class ImageAnalyzer:
 
     def analyze_image(self, image_path):
         """
-        画像をAPIに送信して分析し、テキスト（タグ）を返す
+        画像を選択中のAI接続先へ送信して分析し、テキスト（タグ）を返す
         """
         try:
-            base64_image, mime_type = self.encode_image_data(image_path)
+            if provider_uses_local_image_paths(self.api_provider):
+                image_arguments = {"image_paths": [str(Path(image_path).resolve())]}
+            else:
+                base64_image, mime_type = self.encode_image_data(image_path)
+                image_arguments = {
+                    "images": [base64_image],
+                    "image_mime_types": [mime_type],
+                }
             payload = build_ai_request_payload(
                 api_provider=self.api_provider,
                 model=self.model,
                 prompt=self.get_prompt(),
-                images=[base64_image],
-                image_mime_types=[mime_type],
+                **image_arguments,
             )
-            response = requests.post(self.api_url, json=payload)
-            if response.status_code != 200:
-                logger.error(f"APIエラー: status_code={response.status_code}, text={response.text}")
-                raise Exception(f"APIエラー: {response.status_code} - {response.text}")
-
-            result = response.json()
+            result = execute_ai_request(self.api_provider, self.api_url, payload)
             response_text = extract_ai_response_text(self.api_provider, result)
             if not self.clean_custom_response:
                 return response_text
-            else:
-                return self.clean_response_text(response_text)
-        except requests.exceptions.RequestException as e:
-            logger.error(f"API通信エラー: {str(e)}")
-            raise
+            return self.clean_response_text(response_text)
         except Exception as e:
             logger.error(f"画像分析エラー: {str(e)}")
             raise
@@ -918,13 +861,15 @@ class ChatWorker(QThread):
 
     def run(self):
         """
-        APIにPOSTリクエストを送り、結果を受け取る
+        選択中のAI接続先へリクエストを送り、結果を受け取る
         """
         try:
-            response = requests.post(self.api_url, json=self.payload)
-            if response.status_code != 200:
-                raise Exception(f"HTTP {response.status_code} Error: {response.text}")
-            result = response.json()
+            result = execute_ai_request(
+                self.api_provider,
+                self.api_url,
+                self.payload,
+                should_stop=self.isInterruptionRequested,
+            )
             self.result_ready.emit(extract_ai_response_text(self.api_provider, result))
         except Exception as e:
             self.error_occurred.emit(str(e))
@@ -961,20 +906,17 @@ class TextTransformService:
             top_p=0.9,
         )
         try:
-            response = requests.post(self.api_url, json=payload, timeout=self.timeout)
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"{provider_name} API通信エラー: {e}") from e
-
-        if response.status_code != 200:
-            raise RuntimeError(f"{provider_name} APIエラー: HTTP {response.status_code} - {response.text}")
-
-        try:
-            result = response.json()
-        except ValueError as e:
-            raise RuntimeError(f"{provider_name} APIレスポンスのJSON形式が不正です: {e}") from e
+            policy = ai_providers.HttpPolicy(read_timeout=float(self.timeout))
+            result = execute_ai_request(
+                self.api_provider,
+                self.api_url,
+                payload,
+                policy=policy,
+            )
+        except Exception as e:
+            raise RuntimeError(f"{provider_name} 通信エラー: {e}") from e
 
         response_text = extract_ai_response_text(self.api_provider, result)
-
         return self.clean_output(response_text, preset["mode"])
 
     def clean_output(self, text, mode):
@@ -1690,13 +1632,19 @@ class ImageTaggingTab(QWidget):
         loaded_config = load_app_config()
         self.model_presets = load_model_presets()
         self.prompt_presets = load_prompt_presets()
-        default_model = self.model_presets[0]["model"]
         # 設定を辞書にまとめて保持
         api_provider = normalize_api_provider(loaded_config.get("api_provider") or DEFAULT_API_PROVIDER)
+        default_model = provider_default_model(api_provider)
+        configured_location = loaded_config.get("api_url", provider_default_api_url(api_provider))
+        try:
+            configured_location = validate_provider_location(api_provider, configured_location)
+        except ValueError as exc:
+            logger.warning("保存済み接続先を既定値へ戻します: %s", exc)
+            configured_location = provider_default_api_url(api_provider)
         self.settings = {
             "model": loaded_config.get("model", default_model),
             "api_provider": api_provider,
-            "api_url": loaded_config.get("api_url", provider_default_api_url(api_provider)),
+            "api_url": configured_location,
             "use_japanese": loaded_config.get("use_japanese", False),
             "custom_prompt": loaded_config.get("custom_prompt", ""),
             "clean_response": loaded_config.get("clean_response", True),
@@ -1707,6 +1655,8 @@ class ImageTaggingTab(QWidget):
                 "additional": default_additional_patterns
             })
         }
+        self._provider_locations = {api_provider: configured_location}
+        self._provider_models = {api_provider: self.settings["model"]}
         self.analyzer = None
         self.worker = None
         self.init_ui()
@@ -1751,8 +1701,8 @@ class ImageTaggingTab(QWidget):
         toolbar.addWidget(self.model_combo)
         toolbar.addSeparator()
 
-        url_label = QLabel("API URL:")
-        toolbar.addWidget(url_label)
+        self.location_label = QLabel("API URL:")
+        toolbar.addWidget(self.location_label)
 
         self.url_edit = QLineEdit(self.settings["api_url"])
         self.url_edit.setMinimumWidth(250)
@@ -1769,6 +1719,10 @@ class ImageTaggingTab(QWidget):
         toolbar.addWidget(self.settings_button)
 
         main_layout.addWidget(toolbar)
+        self.provider_notice_label = QLabel()
+        self.provider_notice_label.setWordWrap(True)
+        self.provider_notice_label.setStyleSheet("font-size: 11px;")
+        main_layout.addWidget(self.provider_notice_label)
 
         # メインコンテンツ（スプリッターで左右分割）
         main_splitter = QSplitter(Qt.Horizontal)
@@ -1877,16 +1831,48 @@ class ImageTaggingTab(QWidget):
         main_layout.addLayout(bottom_layout)
 
         self.setLayout(main_layout)
+        self.update_provider_ui()
 
     def get_api_provider(self):
         return normalize_api_provider(self.provider_combo.currentData())
 
+    def update_provider_ui(self):
+        api_provider = self.get_api_provider()
+        self.location_label.setText(f"{provider_location_label(api_provider)}:")
+        self.url_edit.setPlaceholderText(provider_location_placeholder(api_provider))
+        self.url_edit.setToolTip(provider_location_tooltip(api_provider))
+        self.url_edit.setReadOnly(api_provider == API_PROVIDER_OPENAI)
+        self.provider_notice_label.setText(provider_notice(api_provider))
+        line_edit = self.model_combo.lineEdit()
+        if line_edit is not None:
+            placeholder = (
+                "任意（空欄ならCodex側の既定モデル）"
+                if not provider_requires_model(api_provider)
+                else provider_default_model(api_provider)
+            )
+            line_edit.setPlaceholderText(placeholder)
+
     def on_api_provider_changed(self, index):
         api_provider = self.get_api_provider()
-        current_url = self.url_edit.text().strip()
-        if not current_url or current_url in DEFAULT_API_URLS.values():
-            self.url_edit.setText(provider_default_api_url(api_provider))
+        previous_provider = self.settings.get("api_provider", DEFAULT_API_PROVIDER)
+        if previous_provider != api_provider:
+            current_location = self.url_edit.text().strip()
+            if current_location:
+                self._provider_locations[previous_provider] = current_location
+            self._provider_models[previous_provider] = self.model_combo.currentText().strip()
+
+            next_location = self._provider_locations.get(
+                api_provider,
+                provider_default_api_url(api_provider),
+            )
+            if api_provider == API_PROVIDER_OPENAI:
+                next_location = provider_default_api_url(api_provider)
+            self.url_edit.setText(next_location)
+            self.model_combo.setCurrentText(
+                self._provider_models.get(api_provider, provider_default_model(api_provider))
+            )
         self.settings["api_provider"] = api_provider
+        self.update_provider_ui()
 
     def show_settings(self):
         """
@@ -2026,6 +2012,25 @@ class ImageTaggingTab(QWidget):
             QMessageBox.warning(self, "警告", "分析する画像がありません。")
             return
 
+        api_provider = self.get_api_provider()
+        model_name = self.model_combo.currentText().strip()
+        provider_location = self.url_edit.text().strip()
+        if not provider_location:
+            QMessageBox.warning(
+                self,
+                "警告",
+                f"{provider_location_label(api_provider)}を入力してください。",
+            )
+            return
+        try:
+            provider_location = validate_provider_location(api_provider, provider_location)
+        except ValueError as exc:
+            QMessageBox.warning(self, "警告", str(exc))
+            return
+        if provider_requires_model(api_provider) and not model_name:
+            QMessageBox.warning(self, "警告", "モデル名を入力してください。")
+            return
+
         selected = self.image_list.selectedItems()
         if selected and len(selected) < self.image_list.count():
             reply = QMessageBox.question(
@@ -2042,11 +2047,23 @@ class ImageTaggingTab(QWidget):
         else:
             image_paths = [str(self.image_list.item(i).image_path) for i in range(self.image_list.count())]
 
-        # 設定を更新
-        self.settings["model"] = self.model_combo.currentText()
-        self.settings["api_provider"] = self.get_api_provider()
-        self.settings["api_url"] = self.url_edit.text()
+        # 設定を更新（APIキーやCodex認証情報は保存しない）
+        self.settings["model"] = model_name
+        self.settings["api_provider"] = api_provider
+        self.settings["api_url"] = provider_location
         self.settings["use_japanese"] = self.japanese_check.isChecked()
+        saved_config = load_app_config()
+        saved_config.update({
+            "model": self.settings["model"],
+            "api_provider": self.settings["api_provider"],
+            "api_url": self.settings["api_url"],
+            "use_japanese": self.settings["use_japanese"],
+            "custom_prompt": self.settings["custom_prompt"],
+            "clean_response": self.settings["clean_response"],
+            "detail_level": self.settings["detail_level"],
+            "prompt_preset_id": self.settings["prompt_preset_id"],
+        })
+        save_app_config(saved_config)
 
         # Ollama利用時のみアプリ側からローカルサーバ起動を試みる。
         main_window = self.window()
@@ -2669,7 +2686,19 @@ class TextTransformTab(QWidget):
 
         loaded_config = load_app_config()
         self.initial_api_provider = normalize_api_provider(loaded_config.get("api_provider") or DEFAULT_API_PROVIDER)
+        self.current_api_provider = self.initial_api_provider
         self.initial_api_url = loaded_config.get("api_url", provider_default_api_url(self.initial_api_provider))
+        try:
+            self.initial_api_url = validate_provider_location(
+                self.initial_api_provider,
+                self.initial_api_url,
+            )
+        except ValueError as exc:
+            logger.warning("保存済み接続先を既定値へ戻します: %s", exc)
+            self.initial_api_url = provider_default_api_url(self.initial_api_provider)
+        self.initial_model = loaded_config.get("model", provider_default_model(self.initial_api_provider))
+        self._provider_locations = {self.initial_api_provider: self.initial_api_url}
+        self._provider_models = {self.initial_api_provider: self.initial_model}
         self.preview_worker = None
         self.transform_worker = None
         self.init_ui()
@@ -2723,9 +2752,11 @@ class TextTransformTab(QWidget):
                 tooltip = f"{tooltip}\n{preset['description']}"
             self.model_combo.setItemData(index, tooltip, Qt.ToolTipRole)
         self.model_combo.setEditable(True)
+        self.model_combo.setCurrentText(self.initial_model)
         settings_layout.addWidget(self.model_combo, 1, 1)
 
-        settings_layout.addWidget(QLabel("API URL:"), 1, 2)
+        self.location_label = QLabel("API URL:")
+        settings_layout.addWidget(self.location_label, 1, 2)
         self.api_url_edit = QLineEdit(self.initial_api_url)
         settings_layout.addWidget(self.api_url_edit, 1, 3)
 
@@ -2736,6 +2767,11 @@ class TextTransformTab(QWidget):
         self.overwrite_check = QCheckBox("既存サイドカーの上書きを許可")
         self.overwrite_check.setChecked(False)
         settings_layout.addWidget(self.overwrite_check, 2, 3)
+
+        self.provider_notice_label = QLabel()
+        self.provider_notice_label.setWordWrap(True)
+        self.provider_notice_label.setStyleSheet("font-size: 11px;")
+        settings_layout.addWidget(self.provider_notice_label, 3, 0, 1, 4)
 
         main_layout.addWidget(settings_group)
 
@@ -2817,16 +2853,49 @@ class TextTransformTab(QWidget):
         else:
             self.on_mode_changed(self.mode_combo.currentIndex())
 
+        self.update_provider_ui()
         self._update_action_buttons()
 
     def get_api_provider(self):
         return normalize_api_provider(self.provider_combo.currentData())
 
+    def update_provider_ui(self):
+        api_provider = self.get_api_provider()
+        self.location_label.setText(f"{provider_location_label(api_provider)}:")
+        self.api_url_edit.setPlaceholderText(provider_location_placeholder(api_provider))
+        self.api_url_edit.setToolTip(provider_location_tooltip(api_provider))
+        self.api_url_edit.setReadOnly(api_provider == API_PROVIDER_OPENAI)
+        self.provider_notice_label.setText(provider_notice(api_provider))
+        line_edit = self.model_combo.lineEdit()
+        if line_edit is not None:
+            placeholder = (
+                "任意（空欄ならCodex側の既定モデル）"
+                if not provider_requires_model(api_provider)
+                else provider_default_model(api_provider)
+            )
+            line_edit.setPlaceholderText(placeholder)
+
     def on_api_provider_changed(self, index):
         api_provider = self.get_api_provider()
-        current_url = self.api_url_edit.text().strip()
-        if not current_url or current_url in DEFAULT_API_URLS.values():
-            self.api_url_edit.setText(provider_default_api_url(api_provider))
+        previous_provider = self.current_api_provider
+        if previous_provider != api_provider:
+            current_location = self.api_url_edit.text().strip()
+            if current_location:
+                self._provider_locations[previous_provider] = current_location
+            self._provider_models[previous_provider] = self.model_combo.currentText().strip()
+
+            next_location = self._provider_locations.get(
+                api_provider,
+                provider_default_api_url(api_provider),
+            )
+            if api_provider == API_PROVIDER_OPENAI:
+                next_location = provider_default_api_url(api_provider)
+            self.api_url_edit.setText(next_location)
+            self.model_combo.setCurrentText(
+                self._provider_models.get(api_provider, provider_default_model(api_provider))
+            )
+        self.current_api_provider = api_provider
+        self.update_provider_ui()
 
     def browse_source(self):
         folder = QFileDialog.getExistingDirectory(self, "ソースフォルダを選択")
@@ -2873,7 +2942,14 @@ class TextTransformTab(QWidget):
             self.suffix_label.setText("-")
             return
         self.suffix_label.setText(preset["output_suffix"])
-        self.model_combo.setCurrentText(preset["recommended_model"])
+        api_provider = self.get_api_provider()
+        if api_provider in {API_PROVIDER_OPENAI, API_PROVIDER_CODEX_CLI}:
+            current_model = self.model_combo.currentText().strip()
+            local_models = {item["model"] for item in self.model_presets}
+            if not current_model or current_model in local_models:
+                self.model_combo.setCurrentText(provider_default_model(api_provider))
+        else:
+            self.model_combo.setCurrentText(preset["recommended_model"])
         self.refresh_existing_output_preview()
 
     def on_file_selected(self, current, previous):
@@ -2918,8 +2994,20 @@ class TextTransformTab(QWidget):
         model = self.model_combo.currentText().strip()
         api_provider = self.get_api_provider()
         api_url = self.api_url_edit.text().strip()
-        if not model or not api_url:
-            QMessageBox.warning(self, "警告", "モデル名とAPI URLを入力してください。")
+        if not api_url:
+            QMessageBox.warning(
+                self,
+                "警告",
+                f"{provider_location_label(api_provider)}を入力してください。",
+            )
+            return
+        try:
+            api_url = validate_provider_location(api_provider, api_url)
+        except ValueError as exc:
+            QMessageBox.warning(self, "警告", str(exc))
+            return
+        if provider_requires_model(api_provider) and not model:
+            QMessageBox.warning(self, "警告", "モデル名を入力してください。")
             return
         text = self.input_text.toPlainText()
         if not text.strip():
@@ -2958,8 +3046,20 @@ class TextTransformTab(QWidget):
         model = self.model_combo.currentText().strip()
         api_provider = self.get_api_provider()
         api_url = self.api_url_edit.text().strip()
-        if not model or not api_url:
-            QMessageBox.warning(self, "警告", "モデル名とAPI URLを入力してください。")
+        if not api_url:
+            QMessageBox.warning(
+                self,
+                "警告",
+                f"{provider_location_label(api_provider)}を入力してください。",
+            )
+            return
+        try:
+            api_url = validate_provider_location(api_provider, api_url)
+        except ValueError as exc:
+            QMessageBox.warning(self, "警告", str(exc))
+            return
+        if provider_requires_model(api_provider) and not model:
+            QMessageBox.warning(self, "警告", "モデル名を入力してください。")
             return
 
         image_paths = [str(self.file_list.item(i).image_path) for i in range(self.file_list.count())]
