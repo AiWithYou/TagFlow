@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .files import atomic_write_json, atomic_write_text, transfer_image_family
-from .http import ApiRequestError, HttpPolicy, post_json
+from .http import ApiRequestError, HttpPolicy
 
 DEFAULT_IMAGE_POLICY = HttpPolicy(
     connect_timeout=10.0,
@@ -67,15 +67,23 @@ def _install_config_io(app: Any) -> None:
 def _install_image_analysis(app: Any) -> None:
     def analyze_image(self: Any, image_path: str | Path, should_stop=None) -> str:
         try:
-            base64_image, mime_type = self.encode_image_data(image_path)
+            request_images: dict[str, Any]
+            if app.provider_uses_local_image_paths(self.api_provider):
+                request_images = {"image_paths": [str(Path(image_path).resolve())]}
+            else:
+                base64_image, mime_type = self.encode_image_data(image_path)
+                request_images = {
+                    "images": [base64_image],
+                    "image_mime_types": [mime_type],
+                }
             payload = app.build_ai_request_payload(
                 api_provider=self.api_provider,
                 model=self.model,
                 prompt=self.get_prompt(),
-                images=[base64_image],
-                image_mime_types=[mime_type],
+                **request_images,
             )
-            result = post_json(
+            result = app.execute_ai_request(
+                self.api_provider,
                 self.api_url,
                 payload,
                 policy=DEFAULT_IMAGE_POLICY,
@@ -171,7 +179,8 @@ def _install_file_transfer(app: Any) -> None:
 def _install_chat(app: Any) -> None:
     def chat_worker_run(self: Any) -> None:
         try:
-            result = post_json(
+            result = app.execute_ai_request(
+                self.api_provider,
                 self.api_url,
                 self.payload,
                 policy=DEFAULT_CHAT_POLICY,
@@ -207,14 +216,15 @@ def _install_text_transform(app: Any) -> None:
             top_p=0.9,
         )
         try:
-            result = post_json(
+            result = app.execute_ai_request(
+                self.api_provider,
                 self.api_url,
                 payload,
                 policy=self.http_policy,
                 should_stop=should_stop,
             )
-        except ApiRequestError as exc:
-            raise RuntimeError(f"{provider_name} API通信エラー: {exc}") from exc
+        except Exception as exc:
+            raise RuntimeError(f"{provider_name} 通信エラー: {exc}") from exc
         response_text = app.extract_ai_response_text(self.api_provider, result)
         return self.clean_output(response_text, preset["mode"])
 
@@ -352,6 +362,8 @@ def install(app: Any) -> None:
         "extract_ai_response_text",
         "normalize_api_provider",
         "api_provider_display_name",
+        "provider_uses_local_image_paths",
+        "execute_ai_request",
         "ImageAnalyzer",
         "AnalysisWorker",
         "FileOperationWorker",

@@ -83,8 +83,10 @@ class IntegrationTests(unittest.TestCase):
         app.TextTransformWorker = type("TextTransformWorkerForApp", (TextTransformWorker,), {})
         app.normalize_api_provider = lambda provider: provider
         app.api_provider_display_name = lambda provider: provider
+        app.provider_uses_local_image_paths = lambda provider: provider == "codex_cli"
         app.build_ai_request_payload = lambda **kwargs: kwargs
         app.extract_ai_response_text = lambda provider, result: result["response"]
+        app.execute_ai_request = mock.Mock(return_value={"response": "default"})
         return app
 
     def test_install_is_idempotent_and_config_is_app_relative(self) -> None:
@@ -122,17 +124,36 @@ class IntegrationTests(unittest.TestCase):
             analyzer.api_url = "http://localhost/api"
             analyzer.clean_custom_response = True
 
-            with mock.patch(
-                "tagflow_core.integration.post_json",
-                return_value={"response": "raw"},
-            ) as post:
-                result = analyzer.analyze_image("image.png")
+            app.execute_ai_request.return_value = {"response": "raw"}
+            result = analyzer.analyze_image("image.png")
 
             self.assertEqual(result, "clean:raw")
-            post.assert_called_once()
-            payload = post.call_args.args[1]
+            app.execute_ai_request.assert_called_once()
+            payload = app.execute_ai_request.call_args.args[2]
             self.assertEqual(payload["images"], ["encoded"])
             self.assertEqual(payload["image_mime_types"], ["image/png"])
+
+    def test_codex_image_analyzer_passes_local_path_without_base64_encoding(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "image.png"
+            image.write_bytes(b"image")
+            app = self.make_app(root)
+            install(app)
+            analyzer = app.ImageAnalyzer()
+            analyzer.api_provider = "codex_cli"
+            analyzer.model = "custom-codex-model"
+            analyzer.api_url = "codex"
+            analyzer.clean_custom_response = False
+            analyzer.encode_image_data = mock.Mock(side_effect=AssertionError("must not encode"))
+            app.execute_ai_request.return_value = {"response": "caption"}
+
+            result = analyzer.analyze_image(image)
+
+            self.assertEqual(result, "caption")
+            analyzer.encode_image_data.assert_not_called()
+            payload = app.execute_ai_request.call_args.args[2]
+            self.assertEqual(payload["image_paths"], [str(image.resolve())])
 
     def test_analysis_worker_writes_caption_and_emits_progress(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -200,14 +221,32 @@ class IntegrationTests(unittest.TestCase):
             worker.error_occurred = SignalRecorder()
             worker.isInterruptionRequested = lambda: False
 
-            with mock.patch(
-                "tagflow_core.integration.post_json",
-                return_value={"response": "hello"},
-            ):
-                worker.run()
+            app.execute_ai_request.return_value = {"response": "hello"}
+            worker.run()
 
             self.assertEqual(worker.result_ready.calls, [("hello",)])
             self.assertEqual(worker.error_occurred.calls, [])
+            app.execute_ai_request.assert_called_once()
+
+    def test_text_transform_uses_selected_provider_executor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            app = self.make_app(Path(directory))
+            install(app)
+            service = app.TextTransformService("openai", "https://api.openai.com/v1/responses", "gpt-5.6")
+            app.execute_ai_request.return_value = {"response": "translated"}
+            preset = {
+                "prompt": "Translate: {TEXT}",
+                "temperature": 0.1,
+                "mode": "translate_ja_to_en",
+            }
+
+            result = service.transform_text("入力", preset)
+
+            self.assertEqual(result, "translate_ja_to_en:translated")
+            call = app.execute_ai_request.call_args
+            self.assertEqual(call.args[0], "openai")
+            self.assertEqual(call.args[1], "https://api.openai.com/v1/responses")
+            self.assertEqual(call.args[2]["prompt"], "Translate: 入力")
 
     def test_transform_write_restores_previous_output_when_metadata_fails(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
