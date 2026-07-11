@@ -30,3 +30,11 @@ jobs:
 
       - name: Check dataset audit CLI
         run: python tools/audit_dataset.py --help
+
+      - name: Export source snapshot for implementation tooling
+        uses: actions/upload-artifact@v4
+        with:
+          name: tagflow-source-${{ github.sha }}
+          path: .
+          include-hidden-files: true
+          retention-days: 1
