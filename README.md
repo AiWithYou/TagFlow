@@ -6,7 +6,7 @@ TagFlow は、画像の説明文や検索用タグを生成し、生成した `.
 
 ## 現在の対応状況
 
-2026-07-11 時点の実装では、画像タグ付け、AIチャット、テキスト変換で次の4接続先を選択できます。
+2026-08-09 時点の実装では、画像タグ付け、AIチャット、テキスト変換で次の4接続先を選択できます。OpenAI API の既定候補は GPT-5.6 Sol、Ollama の候補は Gemma 4、Qwen 3.5 / 3.6、MiniCPM-V 4.5 / 4.6、TranslateGemma を中心に更新しています。
 
 - `Ollama（ローカル）`: `http://localhost:11434/api/generate`
 - `LM Studio（ローカル）`: `http://localhost:1234/v1/chat/completions`
@@ -105,20 +105,20 @@ ChatGPT Web を汎用APIとして直接呼び出す機能ではありません�
 
 初期候補:
 
-| ラベル | モデル名 | 用途 |
-| --- | --- | --- |
-| GPT-5.6 / OpenAI API（Vision） | `gpt-5.6` | OpenAI Responses APIでの画像説明、タグ化、翻訳 |
-| Gemma 4 12B Vision / 画像説明・変換 標準 | `gemma4:12b` | 画像説明、タグ化、自然文プロンプト化の標準候補 |
-| Gemma 4 E4B Vision / 軽量マルチモーダル | `gemma4:e4b` | 軽量寄りの画像説明/タグ化 |
-| Qwen3-VL 8B / 画像理解バランス | `qwen3-vl:8b` | 画像理解とタグ化のバランス候補 |
-| Qwen3-VL 4B / 軽量画像理解 | `qwen3-vl:4b` | 軽量な画像理解候補 |
-| TranslateGemma 12B / 翻訳 標準 | `translategemma:12b` | 日本語/英語翻訳の標準候補 |
-| TranslateGemma 4B / 軽量翻訳 | `translategemma:4b` | 高速な翻訳プレビューや大量処理 |
-| OpenYourMind Gemma 4 12B Abliterated Uncensored / GGUF Q4_K_M | `hf.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF:Q4_K_M` | Ollamaから試す量子化候補 |
-| Gemma 3 27B Vision / 既存互換 | `gemma3:27b` | 高精度寄りの画像説明 |
-| Gemma 3 4B Vision / 既存互換 | `gemma3:4b` | 軽量、高速確認 |
-| LLaVA Latest / 既存互換 | `llava:latest` | 汎用的な画像説明 |
-| LLaVA 13B / 既存互換 | `llava:13b` | 詳細な説明の試行 |
+| ラベル | モデル名 | 実行先 / 目安容量 | 用途 |
+| --- | --- | --- | --- |
+| GPT-5.6 Sol / OpenAI API（Vision） | `gpt-5.6-sol` | OpenAI API | Responses APIでの画像説明、タグ化、翻訳 |
+| Gemma 4 12B / 標準マルチモーダル | `gemma4:12b` | 約7.6GB | 画像説明、タグ化、テキスト変換の標準候補 |
+| Gemma 4 26B / 高精度 MoE | `gemma4:26b` | 約18GB | 画像理解の品質を優先するワークステーション向け候補 |
+| Qwen 3.6 27B / 高精度マルチモーダル | `qwen3.6:27b` | 約17GB | 新しいQwen世代の高精度なText/Image候補 |
+| Qwen 3.5 9B / 画像理解バランス | `qwen3.5:9b` | 約6.6GB | 画像理解、速度、容量のバランス候補 |
+| Gemma 4 E4B / エッジ向けマルチモーダル | `gemma4:e4b` | 約9.6GB | 計算効率を重視するエッジ向け候補 |
+| MiniCPM-V 4.5 8B / 画像・動画理解 | `minicpm-v4.5:8b` | 約6.1GB | 画像理解を重視する8B候補 |
+| MiniCPM-V 4.6 1B / 超軽量画像理解 | `minicpm-v4.6:1b` | 約1.6GB | 速度と省メモリを優先する超軽量候補 |
+| TranslateGemma 12B / 翻訳 標準 | `translategemma:12b` | 約8.1GB | 日本語/英語翻訳の標準候補 |
+| TranslateGemma 4B / 軽量翻訳 | `translategemma:4b` | 約3.3GB | 翻訳プレビューや大量処理向けの軽量候補 |
+
+ローカルモデルの容量は 2026-08-09 時点で Ollama の各モデルページに表示される既定量子化モデルの値です。実行時にはモデル本体に加え、コンテキストや画像処理用のメモリも必要です。
 
 候補にないモデルも直接入力できます。LM Studio ではロード済みモデル識別子を入力します。Codex CLI はモデル欄を空欄にするのを既定とし、Codex側で現在利用可能な既定モデルを使用します。特定モデルを固定する場合だけ、`/model` などで利用可能と確認したモデルIDを入力してください。
 
@@ -307,9 +307,9 @@ TranslateGemma 系モデルを翻訳モードで使う場合、プリセット�
 | 用途 | 推奨モデル |
 | --- | --- |
 | 日本語/英語翻訳 | `translategemma:12b`, `translategemma:4b` |
-| Danbooru タグ化 | `gemma4:12b`, `gemma4:e4b`, `qwen3-vl:8b` |
-| 英語/日本語自然文プロンプト化 | `gemma4:12b`, `qwen3-vl:8b` |
-| LoRA キャプション化 | `gemma4:12b`, `gemma4:e4b` |
+| Danbooru タグ化 | `gemma4:12b`, `qwen3.5:9b` |
+| 英語/日本語自然文プロンプト化 | `gemma4:12b`, `qwen3.5:9b` |
+| LoRA キャプション化 | `gemma4:12b`, `qwen3.5:9b` |
 
 ![テキスト変換タブ](docs/screenshots/tagflow-text-transform-tab.png)
 
@@ -392,60 +392,52 @@ Ollama、LM Studio、OpenAI API、ChatGPTサブスク経由のCodex CLIは単独
 
 #### Ollama
 
-Ollama をインストールし、使いたい画像対応モデルを取得します。
-
-画像タグ付けだけを使う場合の例:
-
-```powershell
-ollama pull gemma3:4b
-ollama pull gemma3:27b
-ollama pull llava:latest
-```
-
-テキスト変換タブも使う場合の例:
+Ollama を最新安定版へ更新し、使うモデルだけを取得します。最初は標準候補を1つ取得してください。
 
 ```powershell
 ollama pull gemma4:12b
-ollama pull gemma4:e4b
+```
+
+用途や実行環境に応じた取得例:
+
+```powershell
+# 高精度な画像理解
+ollama pull gemma4:26b
+ollama pull qwen3.6:27b
+
+# 容量と画像理解のバランス
+ollama pull qwen3.5:9b
+ollama pull minicpm-v4.5:8b
+
+# 超軽量な画像理解
+ollama pull minicpm-v4.6:1b
+
+# 日本語/英語翻訳
 ollama pull translategemma:12b
 ollama pull translategemma:4b
 ```
 
-OpenYourMind の `gemma-4-12B-it-abliterated-uncensored` を Ollama 経由で試す場合は、フル BF16 の Hugging Face repo ではなく、Ollama が直接扱える GGUF 量子化版を使います。
-
-```powershell
-ollama run hf.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF:Q4_K_M "Reply with exactly: TagFlow model test OK"
-```
-
-TagFlow のモデル候補にも次の Ollama モデル名を追加しています。
-
-```text
-hf.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF:Q4_K_M
-```
-
-この GGUF は `OpenYourMind/gemma-4-12B-it-abliterated-uncensored` の量子化版です。初回実行時は Hugging Face からモデルを取得するため、ネットワークや CDN 状態によって時間がかかることがあります。`Q4_K_M` は約 7.5GB 級です。
-
-OpenYourMind の元 repo は BF16 フル重みで、目安として合計約 24GB のファイルを扱います。Ollama 接続先で使う場合は、Ollama が直接扱える上記の GGUF 版を選びます。LM Studio 接続先で使う場合は、LM Studio 側でロードしたモデル識別子を TagFlow のモデル欄へ入力してください。
-
-ローカル検証では、`ollama pull hf.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF:Q4_K_M` で 7.5GB の取得が完了し、`/api/generate` 経由の短い応答も確認済みです。このモデルは `<|channel>thought` のような channel 制御トークンを応答先頭に含めることがあるため、TagFlow のクリーニング処理ではそれらを削除します。
-
-このモデルは abliterated / uncensored 系です。安全フィルタが弱められているため、用途、出力内容、公開・再配布の扱いは利用者側で確認してください。TagFlow ではローカル Ollama へ入力を送るだけで、出力の内容制御は選択したモデルに依存します。
-
-参照:
-
-- [OpenYourMind/gemma-4-12B-it-abliterated-uncensored](https://huggingface.co/OpenYourMind/gemma-4-12B-it-abliterated-uncensored)
-- [mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF](https://huggingface.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF)
+すべてを取得する必要はありません。特に `gemma4:26b` と `qwen3.6:27b` はモデル本体が17〜18GB級で、推論時には追加メモリも使います。VRAMや共有メモリに余裕がない環境では、`gemma4:12b`、`qwen3.5:9b`、`minicpm-v4.5:8b`、`minicpm-v4.6:1b` から選んでください。
 
 用途別の目安:
 
 | 目的 | まず試すモデル |
 | --- | --- |
-| 画像説明を作る | `gemma4:12b`, `gemma3:4b`, `llava:latest` |
+| 標準的な画像説明・タグ化 | `gemma4:12b`, `qwen3.5:9b` |
+| 高精度な画像理解 | `gemma4:26b`, `qwen3.6:27b` |
+| 画像理解を重視した中型モデル | `minicpm-v4.5:8b` |
+| 超軽量に大量確認する | `minicpm-v4.6:1b` |
 | 日本語/英語翻訳 | `translategemma:12b`, `translategemma:4b` |
-| Danbooru タグ化 | `gemma4:12b`, `gemma4:e4b` |
-| 自然文プロンプト化 | `gemma4:12b` |
-| OpenYourMind Gemma 4 12B 系の検証 | `hf.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF:Q4_K_M` |
-| 軽量に大量確認する | `gemma4:e4b`, `translategemma:4b` |
+| Danbooru タグ化・自然文プロンプト化 | `gemma4:12b`, `qwen3.5:9b` |
+
+モデル情報の参照先:
+
+- [Gemma 4 - Ollama](https://ollama.com/library/gemma4)
+- [Qwen 3.6 - Ollama](https://ollama.com/library/qwen3.6)
+- [Qwen 3.5 - Ollama](https://ollama.com/library/qwen3.5)
+- [MiniCPM-V 4.5 - Ollama](https://ollama.com/library/minicpm-v4.5)
+- [MiniCPM-V 4.6 - Ollama](https://ollama.com/library/minicpm-v4.6)
+- [TranslateGemma - Ollama](https://ollama.com/library/translategemma)
 
 起動:
 
@@ -500,12 +492,15 @@ TagFlow 側の設定:
 | --- | --- |
 | 接続先 | `OpenAI API（従量課金）` |
 | API URL | `https://api.openai.com/v1/responses`（固定） |
-| AIモデル / 使用モデル | `gpt-5.6` |
+| AIモデル / 使用モデル | `gpt-5.6-sol` |
 
 画像タグ付けでは画像をbase64 data URLとして Responses API の `input_image` に渡します。AIチャットとテキスト変換ではテキストだけを送信します。各リクエストでは `store: false` を指定し、TagFlowから送った一回完結の応答を後からAPIで取得できる保存対象にしません。また、認証ヘッダーを別ホストへ転送しないようHTTPリダイレクトを許可しません。
 
+OpenAI の現行ガイドでは `gpt-5.6` エイリアスも GPT-5.6 Sol へルーティングされますが、TagFlow は利用モデルを明確にするため `gpt-5.6-sol` を既定値にしています。
+
 参照:
 
+- [OpenAI API: Using GPT-5.6](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.6)
 - [OpenAI API: Images and vision](https://developers.openai.com/api/docs/guides/images-vision/)
 - [ChatGPT契約とAPI課金は別管理](https://help.openai.com/en/articles/8156019-how-can-i-move-my-chatgpt-subscription-to-the-api)
 
@@ -693,9 +688,9 @@ presets/
 
 ```json
 {
-  "label": "Gemma 3 4B Vision",
-  "model": "gemma3:4b",
-  "description": "軽量寄りの画像説明候補。高速確認や低VRAM環境向け。"
+  "label": "Qwen 3.5 9B / 画像理解バランス",
+  "model": "qwen3.5:9b",
+  "description": "画像理解、速度、容量のバランス候補。"
 }
 ```
 
@@ -817,7 +812,7 @@ OpenAI API の設定例:
 {
   "api_provider": "openai",
   "api_url": "https://api.openai.com/v1/responses",
-  "model": "gpt-5.6",
+  "model": "gpt-5.6-sol",
   "theme": "dark"
 }
 ```
@@ -1004,23 +999,6 @@ codex login status
 ```
 
 TagFlowは1件ごとにCodexプロセスを起動するため、大量画像では処理時間が長くなります。速度と安定性を優先する大量バッチにはOpenAI APIまたはローカル常駐サーバを推奨します。
-
-### Hugging Face GGUF の取得がタイムアウトする
-
-`hf.co/...` 形式のモデルを初めて指定すると、Ollama が Hugging Face から GGUF を取得します。次のようなエラーが出た場合は、モデル取得の段階で CDN 接続がタイムアウトしています。
-
-```text
-pulling manifest
-Error: Head "https://...hf.co/...gguf...": read tcp ... wsarecv: A connection attempt failed
-```
-
-対処:
-
-- 時間を置いて同じ `ollama run hf.co/...` を再実行する。
-- VPN、プロキシ、ファイアウォール、DNS を確認する。
-- ブラウザで Hugging Face のモデルページを開き、アクセスできるか確認する。
-- 軽い量子化を使いたい場合は `Q3_K_M` や `Q4_K_S` などの小さいタグを検討する。
-- 取得が完了したら `ollama list` にモデルが表示され、TagFlow からも同じモデル名で使えます。
 
 ### 画像が読み込めない
 

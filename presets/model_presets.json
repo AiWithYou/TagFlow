@@ -1,62 +1,52 @@
 [
   {
-    "label": "GPT-5.6 / OpenAI API（Vision）",
-    "model": "gpt-5.6",
-    "description": "OpenAI Responses API向け。画像説明、タグ化、翻訳に対応するオンライン標準候補。API利用料はChatGPTサブスクと別課金です。"
+    "label": "GPT-5.6 Sol / OpenAI API（Vision）",
+    "model": "gpt-5.6-sol",
+    "description": "OpenAI Responses API向けの最新フラッグシップ候補。画像説明、タグ化、翻訳に対応し、API利用料はChatGPTサブスクと別課金です。"
   },
   {
-    "label": "Gemma 4 12B Vision / 画像説明・変換 標準",
+    "label": "Gemma 4 12B / 標準マルチモーダル",
     "model": "gemma4:12b",
-    "description": "画像説明、タグ化、自然文プロンプト化に使う標準候補。"
+    "description": "画像説明、タグ化、テキスト変換の標準候補。約7.6GB、256KコンテキストのText/Imageモデル。"
   },
   {
-    "label": "Gemma 4 E4B Vision / 軽量マルチモーダル",
+    "label": "Gemma 4 26B / 高精度 MoE",
+    "model": "gemma4:26b",
+    "description": "画像理解の品質を優先するワークステーション向け候補。約18GB、256Kコンテキスト。"
+  },
+  {
+    "label": "Qwen 3.6 27B / 高精度マルチモーダル",
+    "model": "qwen3.6:27b",
+    "description": "新しいQwen世代のText/Imageモデル。約17GB、256Kコンテキストの高精度候補。"
+  },
+  {
+    "label": "Qwen 3.5 9B / 画像理解バランス",
+    "model": "qwen3.5:9b",
+    "description": "画像理解、速度、容量のバランス候補。約6.6GB、256Kコンテキスト。"
+  },
+  {
+    "label": "Gemma 4 E4B / エッジ向けマルチモーダル",
     "model": "gemma4:e4b",
-    "description": "軽量寄りの画像説明/タグ化候補。高速確認向け。"
+    "description": "計算効率を重視するエッジ向け候補。約9.6GB、128Kコンテキスト。"
   },
   {
-    "label": "Qwen3-VL 8B / 画像理解バランス",
-    "model": "qwen3-vl:8b",
-    "description": "画像理解とタグ化のバランス候補。"
+    "label": "MiniCPM-V 4.5 8B / 画像・動画理解",
+    "model": "minicpm-v4.5:8b",
+    "description": "画像理解を重視する8B候補。約6.1GB、40Kコンテキスト。"
   },
   {
-    "label": "Qwen3-VL 4B / 軽量画像理解",
-    "model": "qwen3-vl:4b",
-    "description": "軽量画像理解候補。速度重視の確認向け。"
+    "label": "MiniCPM-V 4.6 1B / 超軽量画像理解",
+    "model": "minicpm-v4.6:1b",
+    "description": "速度と省メモリを優先する超軽量候補。約1.6GB、256Kコンテキスト。"
   },
   {
     "label": "TranslateGemma 12B / 翻訳 標準",
     "model": "translategemma:12b",
-    "description": "日本語/英語翻訳の標準候補。"
+    "description": "日本語/英語翻訳の標準候補。約8.1GB、128Kコンテキスト。"
   },
   {
     "label": "TranslateGemma 4B / 軽量翻訳",
     "model": "translategemma:4b",
-    "description": "高速な日本語/英語翻訳候補。翻訳プレビューや大量処理向け。"
-  },
-  {
-    "label": "OpenYourMind Gemma 4 12B Abliterated Uncensored / GGUF Q4_K_M",
-    "model": "hf.co/mradermacher/gemma-4-12B-it-abliterated-uncensored-GGUF:Q4_K_M",
-    "description": "OpenYourMind/gemma-4-12B-it-abliterated-uncensored の Ollama 互換 GGUF 量子化候補。初回実行時に Hugging Face から約7.5GBのモデルを取得します。"
-  },
-  {
-    "label": "Gemma 3 27B Vision / 既存互換",
-    "model": "gemma3:27b",
-    "description": "高精度寄りの画像説明候補。VRAMと処理時間に余裕がある環境向け。"
-  },
-  {
-    "label": "Gemma 3 4B Vision / 既存互換",
-    "model": "gemma3:4b",
-    "description": "軽量寄りの画像説明候補。高速確認や低VRAM環境向け。"
-  },
-  {
-    "label": "LLaVA Latest / 既存互換",
-    "model": "llava:latest",
-    "description": "Ollama の汎用的な画像説明モデル候補。"
-  },
-  {
-    "label": "LLaVA 13B / 既存互換",
-    "model": "llava:13b",
-    "description": "詳細な画像説明を試すための大きめの LLaVA 候補。"
+    "description": "翻訳プレビューや大量処理向けの軽量候補。約3.3GB、128Kコンテキスト。"
   }
 ]

@@ -51,7 +51,7 @@ class ProviderPayloadTests(unittest.TestCase):
     def test_openai_responses_payload_uses_base64_image_input(self) -> None:
         payload = build_ai_request_payload(
             API_PROVIDER_OPENAI,
-            "gpt-5.6",
+            "gpt-5.6-sol",
             "describe",
             images=["YWJj"],
             image_mime_types=["image/png"],
@@ -59,7 +59,7 @@ class ProviderPayloadTests(unittest.TestCase):
             top_p=0.8,
         )
 
-        self.assertEqual(payload["model"], "gpt-5.6")
+        self.assertEqual(payload["model"], "gpt-5.6-sol")
         content = payload["input"][0]["content"]
         self.assertEqual(content[0], {"type": "input_text", "text": "describe"})
         self.assertEqual(
@@ -101,7 +101,7 @@ class ProviderPayloadTests(unittest.TestCase):
 
     def test_online_defaults_are_explicit(self) -> None:
         self.assertEqual(provider_default_api_url(API_PROVIDER_OPENAI), "https://api.openai.com/v1/responses")
-        self.assertEqual(provider_default_model(API_PROVIDER_OPENAI), "gpt-5.6")
+        self.assertEqual(provider_default_model(API_PROVIDER_OPENAI), "gpt-5.6-sol")
         self.assertEqual(provider_default_model(API_PROVIDER_CODEX_CLI), "")
 
 
@@ -131,13 +131,13 @@ class OpenAIExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(ProviderConfigurationError, "OPENAI_API_KEY"):
             provider_request_headers(API_PROVIDER_OPENAI, environ={})
 
-        payload = build_ai_request_payload(API_PROVIDER_OPENAI, "gpt-5.6", "hello")
+        payload = build_ai_request_payload(API_PROVIDER_OPENAI, "gpt-5.6-sol", "hello")
         self.assertNotIn("api_key", payload)
         self.assertNotIn("Authorization", payload)
 
     def test_execute_openai_adds_environment_headers(self) -> None:
         session = FakeSession({"output_text": "answer"})
-        payload = build_ai_request_payload(API_PROVIDER_OPENAI, "gpt-5.6", "hello")
+        payload = build_ai_request_payload(API_PROVIDER_OPENAI, "gpt-5.6-sol", "hello")
 
         result = execute_ai_request(
             API_PROVIDER_OPENAI,
@@ -161,7 +161,7 @@ class OpenAIExecutionTests(unittest.TestCase):
 
     def test_rejected_openai_location_never_reaches_http_session(self) -> None:
         session = FakeSession({"output_text": "answer"})
-        payload = build_ai_request_payload(API_PROVIDER_OPENAI, "gpt-5.6", "hello")
+        payload = build_ai_request_payload(API_PROVIDER_OPENAI, "gpt-5.6-sol", "hello")
 
         with self.assertRaisesRegex(ProviderConfigurationError, "APIキー保護"):
             execute_ai_request(

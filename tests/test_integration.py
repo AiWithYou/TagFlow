@@ -232,7 +232,11 @@ class IntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             app = self.make_app(Path(directory))
             install(app)
-            service = app.TextTransformService("openai", "https://api.openai.com/v1/responses", "gpt-5.6")
+            service = app.TextTransformService(
+                "openai",
+                "https://api.openai.com/v1/responses",
+                "gpt-5.6-sol",
+            )
             app.execute_ai_request.return_value = {"response": "translated"}
             preset = {
                 "prompt": "Translate: {TEXT}",
