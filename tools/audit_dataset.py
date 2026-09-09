@@ -74,7 +74,23 @@ def print_human_report(report: DatasetAuditReport) -> None:
             print("  関連: " + ", ".join(issue.related_paths))
 
 
+def _configure_output() -> None:
+    """Use UTF-8 for pipes/files, independent of the Windows ANSI code page.
+
+    Keep interactive terminal encoding, but never crash while reporting an
+    unrepresentable filename. Test/embedded StringIO streams need no changes.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            if stream.isatty():
+                reconfigure(errors="backslashreplace")
+            else:
+                reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _configure_output()
     args = build_parser().parse_args(argv)
     try:
         report = audit_dataset(
