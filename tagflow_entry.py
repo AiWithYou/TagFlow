@@ -1,22 +1,23 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""Hardened TagFlow launcher.
-
-The original :mod:`TagFlow` module remains the GUI implementation.  This
-launcher imports it without starting the event loop, installs the reliability
-upgrades from :mod:`tagflow_core.integration`, and then invokes its ``main``
-function.  Keeping the integration in a small wrapper avoids duplicating the
-large legacy GUI module while making the changes independently testable.
-"""
+"""TagFlow launcher; --version does not import the Qt GUI."""
 
 from __future__ import annotations
 
-import TagFlow as app
+import sys
 
-from tagflow_core.integration import install
+from tagflow_core.version import __version__
 
 
 def main() -> None:
+    if "--version" in sys.argv[1:]:
+        print(f"TagFlow {__version__}")
+        return
+
+    import TagFlow as app
+    from tagflow_core.integration import install
+
+    app.QApplication.setApplicationVersion(__version__)
     install(app)
     app.main()
 

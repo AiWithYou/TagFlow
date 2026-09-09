@@ -107,17 +107,18 @@ class ImageFamilyTransferTests(unittest.TestCase):
             source = Path(source_directory)
             target = Path(target_directory)
             image = self._make_family(source)
-            real_move = __import__("shutil").move
+            real_unlink = Path.unlink
             call_count = 0
 
-            def flaky_move(src: str, dst: str):
+            def flaky_unlink(path, *args, **kwargs):
                 nonlocal call_count
-                call_count += 1
-                if call_count == 2:
-                    raise OSError("simulated failure")
-                return real_move(src, dst)
+                if path.parent == source:
+                    call_count += 1
+                    if call_count == 2:
+                        raise OSError("simulated failure")
+                return real_unlink(path, *args, **kwargs)
 
-            with mock.patch("tagflow_core.files.shutil.move", side_effect=flaky_move):
+            with mock.patch.object(Path, "unlink", new=flaky_unlink):
                 with self.assertRaises(TransferError):
                     transfer_image_family(image, target, "move")
 

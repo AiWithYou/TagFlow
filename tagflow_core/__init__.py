@@ -1,6 +1,7 @@
 """Core reliability and dataset-management services for TagFlow."""
 
-from .audit import AuditIssue, DatasetAuditReport, audit_dataset
+from .version import __version__
+from .audit import AuditCancelled, AuditIssue, DatasetAuditReport, audit_dataset
 from .files import (
     SUPPORTED_IMAGE_SUFFIXES,
     TransferError,
@@ -13,7 +14,9 @@ from .files import (
 from .http import ApiRequestError, HttpPolicy, post_json
 
 __all__ = [
+    "__version__",
     "ApiRequestError",
+    "AuditCancelled",
     "AuditIssue",
     "DatasetAuditReport",
     "HttpPolicy",

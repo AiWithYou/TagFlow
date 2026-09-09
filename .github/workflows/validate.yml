@@ -4,9 +4,19 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    name: Core / ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.13"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -14,7 +24,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python }}
 
       - name: Install core test dependencies
         run: python -m pip install "requests>=2.31.0" "Pillow>=10.0.0"
@@ -23,10 +33,13 @@ jobs:
         run: python tools/validate_presets.py
 
       - name: Compile Python sources
-        run: python -m py_compile TagFlow.py tagflow_entry.py tagflow_core/*.py tools/*.py
+        run: python -m compileall -q TagFlow.py tagflow_entry.py tagflow_core tools tests
 
       - name: Run core unit tests
         run: python -m unittest discover -s tests -v
+
+      - name: Check release version without Qt
+        run: python tagflow_entry.py --version
 
       - name: Check dataset audit CLI
         run: python tools/audit_dataset.py --help
